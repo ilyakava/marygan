@@ -130,6 +130,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.animation as animation
 from IPython.display import HTML
+import visdom
 
 import pdb
 
@@ -140,6 +141,8 @@ print("Random Seed: ", manualSeed)
 random.seed(manualSeed)
 torch.manual_seed(manualSeed)
 
+vis = visdom.Visdom()
+last_itr_visuals = []
 
 ######################################################################
 # Inputs
@@ -204,7 +207,7 @@ ngf = 64
 ndf = 64
 
 # Number of training epochs
-num_epochs = 5
+num_epochs = 50
 
 # Learning rate for optimizers
 lr = 0.0002
@@ -646,81 +649,24 @@ for epoch in range(num_epochs):
         G_losses.append(errG.item())
         D_losses.append(errD.item())
         
+        
+
         # Check how the generator is doing by saving G's output on fixed_noise
         if (iters % 500 == 0) or ((epoch == num_epochs-1) and (i == len(dataloader)-1)):
+            while len(last_itr_visuals) > 0:
+                visual = last_itr_visuals.pop()
+                vis.close(visual)
+
             with torch.no_grad():
                 fake = netG(fixed_noise).detach().cpu()
-            img_list.append(vutils.make_grid(fake, padding=2, normalize=True))
+            
+            fake_grid = vutils.make_grid(fake, padding=2, normalize=True)
+            last_itr_visuals.append(vis.image(fake_grid, opts={'title': '[epoch][itr]: [%d/%d][%d/%d]' % (epoch, num_epochs, i, len(dataloader)) }))
+            last_itr_visuals.append(vis.line(G_losses, opts={'title': 'G_losses'}))
+            last_itr_visuals.append(vis.line(D_losses, opts={'title': 'D_losses'}))
             
         iters += 1
 
-
-######################################################################
-# Results
-# -------
-# 
-# Finally, lets check out how we did. Here, we will look at three
-# different results. First, we will see how D and G’s losses changed
-# during training. Second, we will visualize G’s output on the fixed_noise
-# batch for every epoch. And third, we will look at a batch of real data
-# next to a batch of fake data from G.
-# 
-# **Loss versus training iteration**
-# 
-# Below is a plot of D & G’s losses versus training iterations.
-# 
-
-plt.figure(figsize=(10,5))
-plt.title("Generator and Discriminator Loss During Training")
-plt.plot(G_losses,label="G")
-plt.plot(D_losses,label="D")
-plt.xlabel("iterations")
-plt.ylabel("Loss")
-plt.legend()
-plt.show()
-
-
-######################################################################
-# **Visualization of G’s progression**
-# 
-# Remember how we saved the generator’s output on the fixed_noise batch
-# after every epoch of training. Now, we can visualize the training
-# progression of G with an animation. Press the play button to start the
-# animation.
-# 
-
-#%%capture
-fig = plt.figure(figsize=(8,8))
-plt.axis("off")
-ims = [[plt.imshow(np.transpose(i,(1,2,0)), animated=True)] for i in img_list]
-ani = animation.ArtistAnimation(fig, ims, interval=1000, repeat_delay=1000, blit=True)
-
-HTML(ani.to_jshtml())
-
-
-######################################################################
-# **Real Images vs. Fake Images**
-# 
-# Finally, lets take a look at some real images and fake images side by
-# side.
-# 
-
-# Grab a batch of real images from the dataloader
-real_batch = next(iter(dataloader))
-
-# Plot the real images
-plt.figure(figsize=(15,15))
-plt.subplot(1,2,1)
-plt.axis("off")
-plt.title("Real Images")
-plt.imshow(np.transpose(vutils.make_grid(real_batch[0].to(device)[:64], padding=5, normalize=True).cpu(),(1,2,0)))
-
-# Plot the fake images from the last epoch
-plt.subplot(1,2,2)
-plt.axis("off")
-plt.title("Fake Images")
-plt.imshow(np.transpose(img_list[-1],(1,2,0)))
-plt.show()
 
 
 ######################################################################
