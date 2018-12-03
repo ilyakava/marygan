@@ -117,6 +117,8 @@ from __future__ import print_function
 import argparse
 import os
 import random
+import time
+
 import torch
 import torch.nn as nn
 import torch.nn.parallel
@@ -131,6 +133,8 @@ import matplotlib.pyplot as plt
 import matplotlib.animation as animation
 from IPython.display import HTML
 import visdom
+
+import scipy.misc
 
 import pdb
 
@@ -181,12 +185,17 @@ last_itr_visuals = []
 # 
 
 # Root directory for dataset
-# go
-dataroot = '/scratch0/ilya/locDoc/data/oxford-flowers'
-dataroot2 = '/scratch0/ilya/locDoc/data/StackGAN/Caltech-UCSD-Birds-200-2011/CUB_200_2011'
+# the smaller dataset should come first.
+#dataroot = '/scratch0/ilya/locDoc/data/oxford-flowers'
+dataroot = '/scratch0/ilya/locDoc/data/celeba_partitions/male'
+# dataroot = '/scratch0/ilya/locDoc/data/StackGAN/Caltech-UCSD-Birds-200-2011/CUB_200_2011'
+# dataroot2 = '/scratch0/ilya/locDoc/data/celeba'
+dataroot2 = '/scratch0/ilya/locDoc/data/celeba_partitions/female'
+
+outdata_path = '/scratch0/ilya/locDoc/MaryGAN/experiments/male_and_female'
 
 # Number of workers for dataloader
-workers = 2
+workers = 4
 
 # Batch size during training
 batch_size = 128
@@ -208,16 +217,16 @@ ngf = 64
 ndf = 64
 
 # Number of training epochs
-num_epochs = 50
+num_epochs = 500
 
 # Learning rate for optimizers
-lr = 0.0002
+lr = 0.00002
 
 # Beta1 hyperparam for Adam optimizers
 beta1 = 0.5
 
 # Number of GPUs available. Use 0 for CPU mode.
-ngpu = 1
+ngpu = 2
 
 
 ######################################################################
@@ -590,9 +599,12 @@ data1_D = []
 data2_D = []
 fake_D = []
 fake_D_gen = []
+perf = []
+perftime = []
 iters = 0
 
 print("Starting Training Loop...")
+start = time.time()
 # For each epoch
 for epoch in range(num_epochs):
     # For each batch in the dataloader
@@ -670,6 +682,11 @@ for epoch in range(num_epochs):
         # Update G
         optimizerG.step()
         
+        if iters % 10 == 9:
+            now = time.time()
+            perf.append(10 / (now - start))
+            start = now
+            perftime.append(iters)
         # Output training stats
         if i % 50 == 0:
             print('[%03d/%03d][%04d/%04d]\tLoss_D: %.4f\tLoss_G: %.4f'
@@ -684,7 +701,7 @@ for epoch in range(num_epochs):
         
 
         # Check how the generator is doing by saving G's output on fixed_noise
-        if (iters % 200 == 0) or ((epoch == num_epochs-1) and (i == len(dataloader)-1)):
+        if (iters % 100 == 0) or ((epoch == num_epochs-1) and (i == len(dataloader)-1)):
             while len(last_itr_visuals) > 0:
                 visual = last_itr_visuals.pop()
                 vis.close(visual)
@@ -693,14 +710,20 @@ for epoch in range(num_epochs):
                 fake = netG(fixed_noise).detach().cpu()
             
             fake_grid = vutils.make_grid(fake, padding=2, normalize=True)
+            scipy.misc.imsave('%s/%06d.png' % (outdata_path, int(iters / 100)),
+                np.moveaxis(fake[random.randint(0, fake.shape[0]-1),:,:,:].numpy(),0,-1)) 
             last_itr_visuals.append(vis.image(fake_grid, opts={'title': '[epoch][itr]: [%d/%d][%d/%d]' % (epoch, num_epochs, i, len(dataloader)) }))
-            last_itr_visuals.append(vis.line(losses, opts={'legend': ['errG', 'errD'], 'title': 'Losses'}))
+            
+            last_itr_visuals.append(vis.line(losses, list(range(iters+1)), opts={'legend': ['errG', 'errD'], 'title': 'Losses'}))
 
             legend = ['fake', 'data1', 'data2']
-            last_itr_visuals.append(vis.line(data1_D, opts={'legend': legend, 'title': 'Data1 classification'}))
-            last_itr_visuals.append(vis.line(data2_D, opts={'legend': legend, 'title': 'Data2 classification'}))
-            last_itr_visuals.append(vis.line(fake_D, opts={'legend': legend, 'title': 'Fake classification, D step'}))
-            last_itr_visuals.append(vis.line(fake_D_gen, opts={'legend': legend, 'title': 'Fake classification, G step'}))
+            last_itr_visuals.append(vis.line(data1_D, list(range(iters+1)), opts={'legend': legend, 'title': 'Data1 classification'}))
+            last_itr_visuals.append(vis.line(data2_D, list(range(iters+1)), opts={'legend': legend, 'title': 'Data2 classification'}))
+            last_itr_visuals.append(vis.line(fake_D, list(range(iters+1)), opts={'legend': legend, 'title': 'Fake classification, D step'}))
+            last_itr_visuals.append(vis.line(fake_D_gen, list(range(iters+1)), opts={'legend': legend, 'title': 'Fake classification, G step'}))
+
+            if perf:
+                last_itr_visuals.append(vis.line(perf, perftime, opts={'title': 'iters per second'}))
             
         iters += 1
 
