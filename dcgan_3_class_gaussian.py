@@ -185,6 +185,7 @@ last_itr_visuals = []
 # 
 
 # Root directory for dataset
+legend = ['fake', 'data1', 'data2']
 # the smaller dataset should come first.
 #dataroot = '/scratch0/ilya/locDoc/data/oxford-flowers'
 dataroot = '/scratch0/ilya/locDoc/data/celeba_partitions/male_close'
@@ -193,6 +194,8 @@ dataroot = '/scratch0/ilya/locDoc/data/celeba_partitions/male_close'
 dataroot2 = '/scratch0/ilya/locDoc/data/celeba_partitions/female_close'
 # dataroot = '/scratch0/ilya/locDoc/data/mnist-M/mnist_m'
 # dataroot2 = '/scratch0/ilya/locDoc/data/svhn'
+# legend = ['fake', 'mu=-1', 'mu=+1']
+
 
 outdata_path = '/scratch0/ilya/locDoc/MaryGAN/experiments/male_and_female_close4'
 
@@ -200,7 +203,7 @@ outdata_path = '/scratch0/ilya/locDoc/MaryGAN/experiments/male_and_female_close4
 workers = 4
 
 # Batch size during training
-batch_size = 128
+batch_size = 32
 
 # Spatial size of training images. All images will be resized to this
 #   size using a transformer.
@@ -222,8 +225,8 @@ ndf = 4
 # Number of training epochs
 num_epochs = 500
 
-# Learning rate for optimizers
-lr = 0.02 # now
+# Learning rate for optimizers 
+lr = 0.002 # now
 
 # Beta1 hyperparam for Adam optimizers
 beta1 = 0.5
@@ -270,7 +273,8 @@ n_classes = 3
 n_examples = 5000
 
 dataloader = torch.tensor(np.random.normal(-1, 0.1, nc*n_examples).reshape((n_examples,nc)),dtype=torch.float)
-dataloader2 = torch.tensor(np.random.normal(1, 0.1, nc*n_examples).reshape((n_examples,nc)),dtype=torch.float)
+# dataloader2 = torch.tensor(np.random.normal(1, 0.1, nc*n_examples).reshape((n_examples,nc)),dtype=torch.float)
+dataloader2 = torch.tensor(np.concatenate([np.random.normal(-1, 0.1, (n_examples,1)), np.random.normal(1, 0.1, (n_examples,1))], axis=1),dtype=torch.float)
 
 # Decide which device we want to run on
 device = torch.device("cuda:0" if (torch.cuda.is_available() and ngpu > 0) else "cpu")
@@ -631,7 +635,7 @@ for epoch in range(num_epochs):
 
 
 
-        # second dataset
+        # second dataset 
         real_cpu2 = data2[0].to(device)
         b_size2 = real_cpu2.size(0)
 
@@ -645,6 +649,9 @@ for epoch in range(num_epochs):
         # Calculate gradients for D in backward pass
         errD_real2.backward()
         data2_D.append(torch.mean(output, dim=0).tolist())
+
+        # errD_real_all = (errD_real + errD_real2) / 2
+        # errD_real_all.backward()
 
 
 
@@ -679,7 +686,9 @@ for epoch in range(num_epochs):
         # Calculate G's loss based on this output
         d1g0_g = criterion(output[:,1], label[:,1])
         d2g0_g = criterion(output[:,2], label[:,2])
-        errG = d1g0_g + d2g0_g
+        d0g0_g = criterion(output[:,0], label[:,0])
+        # errG = d1g0_g + d2g0_g
+        errG = 2*d0g0_g
         # Calculate gradients for G
         errG.backward()
         fake_D_gen.append(torch.mean(output, dim=0).tolist())
@@ -700,7 +709,7 @@ for epoch in range(num_epochs):
         # Save Losses for plotting later
         losses.append([errG.item(), errD.item()])
         real_losses_detail.append([d0g1.item(), d2g1.item(), d0g2.item(), d1g2.item()])
-        fake_losses_detail.append([d1g0.item(), d2g0.item(), d1g0_g.item(), d2g0_g.item()])
+        fake_losses_detail.append([d1g0.item(), d2g0.item(), d1g0_g.item(), d2g0_g.item(), d0g0_g.item()])
         
         
 
@@ -716,9 +725,9 @@ for epoch in range(num_epochs):
                 fixed_fake = netG(fixed_noise).detach().cpu()
             
             plotX = np.concatenate([fixed_fake.numpy(), dataloader.numpy()[:64], dataloader2.numpy()[:64]])
-            plotY = np.concatenate([np.ones(64), 2*np.ones(128)])
+            plotY = np.concatenate([np.ones(64), 2*np.ones(64), 3*np.ones(64)])
             
-            last_itr_visuals.append(vis.scatter(plotX, plotY, opts={'title': 'Moving Fakes [epoch][itr]: [%d/%d][%d/%d]' % (epoch, num_epochs, i, len(dataloader)) }))
+            last_itr_visuals.append(vis.scatter(plotX, plotY, opts={'legend': legend, 'title': 'Moving Fakes [epoch][itr]: [%d/%d][%d/%d]' % (epoch, num_epochs, i, len(dataloader)) }))
             # fake_grid = vutils.make_grid(fixed_fake, padding=2, normalize=True)
             # moving_fake_grid = vutils.make_grid(moving_fake, padding=2, normalize=True)
 
@@ -733,9 +742,8 @@ for epoch in range(num_epochs):
             ds = max(1,len(data1_D) // (max_line_samples+1))
             last_itr_visuals.append(vis.line(decimate(losses,ds), list(range(0,iters+1,ds)), opts={'legend': ['errG', 'errD'], 'title': 'Network Losses'}))
             last_itr_visuals.append(vis.line(decimate(real_losses_detail,ds), list(range(0,iters+1,ds)), opts={'legend': ['d0g1', 'd2g1', 'd0g2', 'd1g2'], 'title': 'Real Data Losses'}))
-            last_itr_visuals.append(vis.line(decimate(fake_losses_detail,ds), list(range(0,iters+1,ds)), opts={'legend': ['d1g0', 'd2g0', 'd1g0_g', 'd2g0_g'], 'title': 'Fake Data Losses'}))
+            last_itr_visuals.append(vis.line(decimate(fake_losses_detail,ds), list(range(0,iters+1,ds)), opts={'legend': ['d1g0', 'd2g0', 'd1g0_g', 'd2g0_g', 'd0g0_g'], 'title': 'Fake Data Losses'}))
 
-            legend = ['fake', 'data1', 'data2']
             last_itr_visuals.append(vis.line(decimate(data1_D,ds), list(range(0,iters+1,ds)), opts={'legend': legend, 'title': 'Data1 classification'}))
             last_itr_visuals.append(vis.line(decimate(data2_D,ds), list(range(0,iters+1,ds)), opts={'legend': legend, 'title': 'Data2 classification'}))
             last_itr_visuals.append(vis.line(decimate(fake_D,ds), list(range(0,iters+1,ds)), opts={'legend': legend, 'title': 'Fake classification, D step'}))
