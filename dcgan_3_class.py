@@ -194,13 +194,13 @@ dataroot2 = '/scratch0/ilya/locDoc/data/celeba_partitions/female_close'
 # dataroot = '/scratch0/ilya/locDoc/data/mnist-M/mnist_m'
 # dataroot2 = '/scratch0/ilya/locDoc/data/svhn'
 
-outdata_path = '/scratch0/ilya/locDoc/MaryGAN/experiments/male_and_female_close4'
+outdata_path = '/scratch0/ilya/locDoc/MaryGAN/experiments/male_and_female_close5'
 
 # Number of workers for dataloader
 workers = 4
 
 # Batch size during training
-batch_size = 512
+batch_size = 128
 
 # Spatial size of training images. All images will be resized to this
 #   size using a transformer.
@@ -223,7 +223,7 @@ ndf = 64
 num_epochs = 500
 
 # Learning rate for optimizers
-lr = 0.00004
+lr = 0.00002
 
 # Beta1 hyperparam for Adam optimizers
 beta1 = 0.5
@@ -758,7 +758,7 @@ for epoch in range(num_epochs):
 
         ############################
         # (2) Update G network: maximize log(D(G(z)))
-        ###########################
+        ####### ####################
         netG.zero_grad()
         # fake labels are real for generator cost
         label = torch.tensor([0,1,1], dtype=torch.float, device=device).repeat(b_size,1)
@@ -767,7 +767,9 @@ for epoch in range(num_epochs):
         # Calculate G's loss based on this output
         d1g0_g = criterion(output[:,1], label[:,1])
         d2g0_g = criterion(output[:,2], label[:,2])
-        errG = d1g0_g + d2g0_g
+        d0g0_g = criterion(output[:,0], label[:,0])
+        # errG = d1g0_g + d2g0_g
+        errG = 2*d0g0_g
         # Calculate gradients for G
         errG.backward()
         fake_D_gen.append(torch.mean(output, dim=0).tolist())
@@ -788,7 +790,7 @@ for epoch in range(num_epochs):
         # Save Losses for plotting later
         losses.append([errG.item(), errD.item()])
         real_losses_detail.append([d0g1.item(), d2g1.item(), d0g2.item(), d1g2.item()])
-        fake_losses_detail.append([d1g0.item(), d2g0.item(), d1g0_g.item(), d2g0_g.item()])
+        fake_losses_detail.append([d1g0.item(), d2g0.item(), d1g0_g.item(), d2g0_g.item(), d0g0_g.item()])
         
         
 
@@ -817,7 +819,7 @@ for epoch in range(num_epochs):
             ds = max(1,len(data1_D) // (max_line_samples+1))
             last_itr_visuals.append(vis.line(decimate(losses,ds), list(range(0,iters+1,ds)), opts={'legend': ['errG', 'errD'], 'title': 'Network Losses'}))
             last_itr_visuals.append(vis.line(decimate(real_losses_detail,ds), list(range(0,iters+1,ds)), opts={'legend': ['d0g1', 'd2g1', 'd0g2', 'd1g2'], 'title': 'Real Data Losses'}))
-            last_itr_visuals.append(vis.line(decimate(fake_losses_detail,ds), list(range(0,iters+1,ds)), opts={'legend': ['d1g0', 'd2g0', 'd1g0_g', 'd2g0_g'], 'title': 'Fake Data Losses'}))
+            last_itr_visuals.append(vis.line(decimate(fake_losses_detail,ds), list(range(0,iters+1,ds)), opts={'legend': ['d1g0', 'd2g0', 'd1g0_g', 'd2g0_g', 'd0g0_g'], 'title': 'Fake Data Losses'}))
 
             legend = ['fake', 'data1', 'data2']
             last_itr_visuals.append(vis.line(decimate(data1_D,ds), list(range(0,iters+1,ds)), opts={'legend': legend, 'title': 'Data1 classification'}))
