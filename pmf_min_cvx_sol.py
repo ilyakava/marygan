@@ -135,8 +135,15 @@ def ternary_eg():
     pyplot.legend(loc='upper right')
     pyplot.show()
 
+    # pdb.set_trace()
     # you can see in this case that f0 is multimodal, not a literal mixture,
     # when the datasets are closer together
+
+    pyplot.bar(bins, f1/2, width=bin_width, alpha=0.5, label='f1')
+    pyplot.bar(bins, f2/2, width=bin_width, alpha=0.5, label='f2')
+    pyplot.bar(bins, f0, width=bin_width, alpha=0.5, label='f0')
+    pyplot.legend(loc='upper right')
+    pyplot.show()
 
 if __name__ == '__main__':
     ternary_eg()
