@@ -186,15 +186,19 @@ last_itr_visuals = []
 
 # Root directory for dataset
 # the smaller dataset should come first.
-#dataroot = '/scratch0/ilya/locDoc/data/oxford-flowers'
-dataroot = '/scratch0/ilya/locDoc/data/celeba_partitions/male_close'
-# dataroot = '/scratch0/ilya/locDoc/data/StackGAN/Caltech-UCSD-Birds-200-2011/CUB_200_2011'
+
+# dataroot = '/scratch0/ilya/locDoc/data/oxford-flowers'
+# dataroot2 = '/scratch0/ilya/locDoc/data/StackGAN/Caltech-UCSD-Birds-200-2011/CUB_200_2011'
 # dataroot2 = '/scratch0/ilya/locDoc/data/celeba'
-dataroot2 = '/scratch0/ilya/locDoc/data/celeba_partitions/female_close'
+# dataroot = '/scratch0/ilya/locDoc/data/celeba_partitions/male_close'
+# dataroot2 = '/scratch0/ilya/locDoc/data/celeba_partitions/female_close'
 # dataroot = '/scratch0/ilya/locDoc/data/mnist-M/mnist_m'
 # dataroot2 = '/scratch0/ilya/locDoc/data/svhn'
 
-outdata_path = '/scratch0/ilya/locDoc/MaryGAN/experiments/male_and_female_close5'
+dataroot = '/scratch0/ilya/locDoc/data/celeba_sides/right'
+dataroot2 = '/scratch0/ilya/locDoc/data/celeba_sides/left'
+
+outdata_path = '/scratch0/ilya/locDoc/MaryGAN/experiments/lr'
 
 # Number of workers for dataloader
 workers = 4
@@ -384,7 +388,7 @@ class Generator(nn.Module):
 
 class Generator32(nn.Module):
     def __init__(self, ngpu):
-        super(Generator, self).__init__()
+        super(Generator32, self).__init__()
         self.ngpu = ngpu
         self.main = nn.Sequential(
             # input is Z, going into a convolution
@@ -487,7 +491,7 @@ class Discriminator(nn.Module):
 
 class Discriminator32(nn.Module):
     def __init__(self, ngpu):
-        super(Discriminator, self).__init__()
+        super(Discriminator32, self).__init__()
         self.ngpu = ngpu
         n_classes = 3
         self.main = nn.Sequential(
@@ -571,6 +575,9 @@ print(netD)
 
 # Initialize BCELoss function
 criterion = nn.BCELoss()
+# def criterion(x,y):
+#     # supposed to replace KL with TV a la wgan  
+#     return torch.mean(y*x + (1-y)*(-x))
 
 # Create batch of latent vectors that we will use to visualize
 #  the progression of the generator
