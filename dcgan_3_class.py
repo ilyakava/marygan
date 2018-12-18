@@ -203,8 +203,8 @@ outdata_path = '/scratch0/ilya/locDoc/MaryGAN/experiments/lr'
 # Number of workers for dataloader
 workers = 4
 
-# Batch size during training
-batch_size = 128
+# Batch size during training, per dataset
+batch_size = 64
 
 # Spatial size of training images. All images will be resized to this
 #   size using a transformer.
@@ -227,7 +227,7 @@ ndf = 64
 num_epochs = 500
 
 # Learning rate for optimizers
-lr = 0.00002
+lr = 0.0002
 
 # Beta1 hyperparam for Adam optimizers
 beta1 = 0.5
@@ -718,8 +718,10 @@ for epoch in range(num_epochs):
         # Calculate loss on all-real batch
         # loss variable names will be decision given true
         d0g1 = criterion(output[:,0], label[:,0])
+        d1g1 = criterion(output[:,1], label[:,1])
         d2g1 = criterion(output[:,2], label[:,2])
-        errD_real = d0g1 + d2g1
+        errD_real = d0g1 + d1g1 + d2g1
+        # errD_real = criterion(output[:,1], label[:,1])
         # Calculate gradients for D in backward pass
         errD_real.backward()
         data1_D.append(torch.mean(output, dim=0).tolist())
@@ -736,7 +738,9 @@ for epoch in range(num_epochs):
         # Calculate loss on all-real batch
         d0g2 = criterion(output[:,0], label[:,0])
         d1g2 = criterion(output[:,1], label[:,1])
-        errD_real2 = d0g2 + d1g2
+        d2g2 = criterion(output[:,2], label[:,2])
+        errD_real2 = d0g2 + d1g2 + d2g2
+        # errD_real2 = criterion(output[:,2], label[:,2])
         # Calculate gradients for D in backward pass
         errD_real2.backward()
         data2_D.append(torch.mean(output, dim=0).tolist())
@@ -745,16 +749,18 @@ for epoch in range(num_epochs):
 
         ## Train with all-fake batch
         # Generate batch of latent vectors
-        noise = torch.randn(b_size, nz, 1, 1, device=device)
+        noise = torch.randn(2*b_size, nz, 1, 1, device=device)
         # Generate fake image batch with G
         fake = netG(noise)
-        label = torch.tensor([1,0,0], dtype=torch.float, device=device).repeat(b_size,1)
+        label = torch.tensor([1,0,0], dtype=torch.float, device=device).repeat(2*b_size,1)
         # Classify all fake batch with D
         output = netD(fake.detach()).squeeze()
         # Calculate D's loss on the all-fake batch
+        d0g0 = criterion(output[:,0], label[:,0])
         d1g0 = criterion(output[:,1], label[:,1])
         d2g0 = criterion(output[:,2], label[:,2])
-        errD_fake = d1g0 + d2g0
+        errD_fake = d0g0 + d1g0 + d2g0
+        # errD_fake = criterion(output[:,0], label[:,0])
         # Calculate the gradients for this batch
         errD_fake.backward()
         fake_D.append(torch.mean(output, dim=0).tolist())
@@ -768,15 +774,16 @@ for epoch in range(num_epochs):
         ####### ####################
         netG.zero_grad()
         # fake labels are real for generator cost
-        label = torch.tensor([0,1,1], dtype=torch.float, device=device).repeat(b_size,1)
+        label = torch.tensor([0,1,1], dtype=torch.float, device=device).repeat(2*b_size,1)
         # Since we just updated D, perform another forward pass of all-fake batch through D
         output = netD(fake).squeeze()
         # Calculate G's loss based on this output
+        d0g0_g = criterion(output[:,0], label[:,0])
         d1g0_g = criterion(output[:,1], label[:,1])
         d2g0_g = criterion(output[:,2], label[:,2])
-        d0g0_g = criterion(output[:,0], label[:,0])
+        errG = d0g0_g + d1g0_g + d2g0_g
         # errG = d1g0_g + d2g0_g
-        errG = 2*d0g0_g
+        # errG = d0g0_g
         # Calculate gradients for G
         errG.backward()
         fake_D_gen.append(torch.mean(output, dim=0).tolist())
