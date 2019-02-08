@@ -1,116 +1,4 @@
 # -*- coding: utf-8 -*-
-"""
-DCGAN Tutorial
-==============
-
-**Author**: `Nathan Inkawhich <https://github.com/inkawhich>`__
-
-"""
-
-
-######################################################################
-# Introduction
-# ------------
-# 
-# This tutorial will give an introduction to DCGANs through an example. We
-# will train a generative adversarial network (GAN) to generate new
-# celebrities after showing it pictures of many real celebrities. Most of
-# the code here is from the dcgan implementation in
-# `pytorch/examples <https://github.com/pytorch/examples>`__, and this
-# document will give a thorough explanation of the implementation and shed
-# light on how and why this model works. But don’t worry, no prior
-# knowledge of GANs is required, but it may require a first-timer to spend
-# some time reasoning about what is actually happening under the hood.
-# Also, for the sake of time it will help to have a GPU, or two. Lets
-# start from the beginning.
-# 
-# Generative Adversarial Networks
-# -------------------------------
-# 
-# What is a GAN?
-# ~~~~~~~~~~~~~~
-# 
-# GANs are a framework for teaching a DL model to capture the training
-# data’s distribution so we can generate new data from that same
-# distribution. GANs were invented by Ian Goodfellow in 2014 and first
-# described in the paper `Generative Adversarial
-# Nets <https://papers.nips.cc/paper/5423-generative-adversarial-nets.pdf>`__.
-# They are made of two distinct models, a *generator* and a
-# *discriminator*. The job of the generator is to spawn ‘fake’ images that
-# look like the training images. The job of the discriminator is to look
-# at an image and output whether or not it is a real training image or a
-# fake image from the generator. During training, the generator is
-# constantly trying to outsmart the discriminator by generating better and
-# better fakes, while the discriminator is working to become a better
-# detective and correctly classify the real and fake images. The
-# equilibrium of this game is when the generator is generating perfect
-# fakes that look as if they came directly from the training data, and the
-# discriminator is left to always guess at 50% confidence that the
-# generator output is real or fake.
-# 
-# Now, lets define some notation to be used throughout tutorial starting
-# with the discriminator. Let :math:`x` be data representing an image.
-# :math:`D(x)` is the discriminator network which outputs the (scalar)
-# probability that :math:`x` came from training data rather than the
-# generator. Here, since we are dealing with images the input to
-# :math:`D(x)` is an image of HWC size 3x64x64. Intuitively, :math:`D(x)`
-# should be HIGH when :math:`x` comes from training data and LOW when
-# :math:`x` comes from the generator. :math:`D(x)` can also be thought of
-# as a traditional binary classifier.
-# 
-# For the generator’s notation, let :math:`z` be a latent space vector
-# sampled from a standard normal distribution. :math:`G(z)` represents the
-# generator function which maps the latent vector :math:`z` to data-space.
-# The goal of :math:`G` is to estimate the distribution that the training
-# data comes from (:math:`p_{data}`) so it can generate fake samples from
-# that estimated distribution (:math:`p_g`).
-# 
-# So, :math:`D(G(z))` is the probability (scalar) that the output of the
-# generator :math:`G` is a real image. As described in `Goodfellow’s
-# paper <https://papers.nips.cc/paper/5423-generative-adversarial-nets.pdf>`__,
-# :math:`D` and :math:`G` play a minimax game in which :math:`D` tries to
-# maximize the probability it correctly classifies reals and fakes
-# (:math:`logD(x)`), and :math:`G` tries to minimize the probability that
-# :math:`D` will predict its outputs are fake (:math:`log(1-D(G(x)))`).
-# From the paper, the GAN loss function is
-# 
-# .. math:: \underset{G}{\text{min}} \underset{D}{\text{max}}V(D,G) = \mathbb{E}_{x\sim p_{data}(x)}\big[logD(x)\big] + \mathbb{E}_{z\sim p_{z}(z)}\big[log(1-D(G(x)))\big]
-# 
-# In theory, the solution to this minimax game is where
-# :math:`p_g = p_{data}`, and the discriminator guesses randomly if the
-# inputs are real or fake. However, the convergence theory of GANs is
-# still being actively researched and in reality models do not always
-# train to this point.
-# 
-# What is a DCGAN?
-# ~~~~~~~~~~~~~~~~
-# 
-# A DCGAN is a direct extension of the GAN described above, except that it
-# explicitly uses convolutional and convolutional-transpose layers in the
-# discriminator and generator, respectively. It was first described by
-# Radford et. al. in the paper `Unsupervised Representation Learning With
-# Deep Convolutional Generative Adversarial
-# Networks <https://arxiv.org/pdf/1511.06434.pdf>`__. The discriminator
-# is made up of strided
-# `convolution <https://pytorch.org/docs/stable/nn.html#torch.nn.Conv2d>`__
-# layers, `batch
-# norm <https://pytorch.org/docs/stable/nn.html#torch.nn.BatchNorm2d>`__
-# layers, and
-# `LeakyReLU <https://pytorch.org/docs/stable/nn.html#torch.nn.LeakyReLU>`__
-# activations. The input is a 3x64x64 input image and the output is a
-# scalar probability that the input is from the real data distribution.
-# The generator is comprised of
-# `convolutional-transpose <https://pytorch.org/docs/stable/nn.html#torch.nn.ConvTranspose2d>`__
-# layers, batch norm layers, and
-# `ReLU <https://pytorch.org/docs/stable/nn.html#relu>`__ activations. The
-# input is a latent vector, :math:`z`, that is drawn from a standard
-# normal distribution and the output is a 3x64x64 RGB image. The strided
-# conv-transpose layers allow the latent vector to be transformed into a
-# volume with the same shape as an image. In the paper, the authors also
-# give some tips about how to setup the optimizers, how to calculate the
-# loss functions, and how to initialize the model weights, all of which
-# will be explained in the coming sections.
-# 
 
 from __future__ import print_function
 #%matplotlib inline
@@ -272,9 +160,9 @@ n_classes = 3
 # Create a isotropic dataset
 n_examples = 5000
 
-dataloader = torch.tensor(np.random.normal(-1, 0.1, nc*n_examples).reshape((n_examples,nc)),dtype=torch.float)
+dataloader = torch.tensor(np.random.normal(-1/2.0, 0.5, nc*n_examples).reshape((n_examples,nc)),dtype=torch.float)
 # dataloader2 = torch.tensor(np.random.normal(1, 0.1, nc*n_examples).reshape((n_examples,nc)),dtype=torch.float)
-dataloader2 = torch.tensor(np.concatenate([np.random.normal(-1, 0.1, (n_examples,1)), np.random.normal(1, 0.1, (n_examples,1))], axis=1),dtype=torch.float)
+dataloader2 = torch.tensor(np.concatenate([np.random.normal(-1/2.0, 0.5, (n_examples,1)), np.random.normal(1/2.0, 0.5, (n_examples,1))], axis=1),dtype=torch.float)
 
 # Decide which device we want to run on
 device = torch.device("cuda:0" if (torch.cuda.is_available() and ngpu > 0) else "cpu")
@@ -487,6 +375,8 @@ print(netD)
 
 # Initialize BCELoss function
 criterion = nn.BCELoss()
+# def criterion(x,y):
+#     return torch.mean(y*x + (1-y)*(-x))
 
 # Create batch of latent vectors that we will use to visualize
 #  the progression of the generator
@@ -687,8 +577,8 @@ for epoch in range(num_epochs):
         d1g0_g = criterion(output[:,1], label[:,1])
         d2g0_g = criterion(output[:,2], label[:,2])
         d0g0_g = criterion(output[:,0], label[:,0])
-        # errG = d1g0_g + d2g0_g
-        errG = 2*d0g0_g
+        errG = d1g0_g + d2g0_g
+        # errG = 2*d0g0_g
         # Calculate gradients for G
         errG.backward()
         fake_D_gen.append(torch.mean(output, dim=0).tolist())
@@ -720,7 +610,7 @@ for epoch in range(num_epochs):
                 vis.close(visual)
 
             with torch.no_grad():
-                new_noise = torch.randn(64, nz, device=device)
+                new_noise = torch.randn(500, nz, device=device)
                 moving_fake = netG(new_noise).detach().cpu()
                 fixed_fake = netG(fixed_noise).detach().cpu()
             
@@ -728,6 +618,7 @@ for epoch in range(num_epochs):
             plotY = np.concatenate([np.ones(64), 2*np.ones(64), 3*np.ones(64)])
             
             last_itr_visuals.append(vis.scatter(plotX, plotY, opts={'legend': legend, 'title': 'Moving Fakes [epoch][itr]: [%d/%d][%d/%d]' % (epoch, num_epochs, i, len(dataloader)) }))
+            last_itr_visuals.append(vis.histogram(moving_fake.numpy()[:,1], 100, opts={'title': 'Moving Fakes, y coord' }))
             # fake_grid = vutils.make_grid(fixed_fake, padding=2, normalize=True)
             # moving_fake_grid = vutils.make_grid(moving_fake, padding=2, normalize=True)
 
