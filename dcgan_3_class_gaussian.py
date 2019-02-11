@@ -73,7 +73,7 @@ last_itr_visuals = []
 # 
 
 # Root directory for dataset
-legend = ['data1', 'data2', 'fake']
+legend = ['fake', 'data1', 'data2']
 # the smaller dataset should come first.
 #dataroot = '/scratch0/ilya/locDoc/data/oxford-flowers'
 dataroot = '/scratch0/ilya/locDoc/data/celeba_partitions/male_close'
@@ -114,7 +114,7 @@ ndf = 512
 num_epochs = 500
 
 # Learning rate for optimizers 
-lr = 0.0002 # now
+lr = 0.0001 # now
 
 # Beta1 hyperparam for Adam optimizers
 beta1 = 0.5
@@ -162,9 +162,12 @@ critic_iters = 5
 # Create a isotropic dataset
 n_examples = 50000
 
-dataloader = torch.tensor(np.random.normal(-1/2.0, 0.5, nc*n_examples).reshape((n_examples,nc)),dtype=torch.float)
+dataloader = torch.tensor(np.random.normal(2, 1, nc*n_examples).reshape((n_examples,nc)),dtype=torch.float)
 # dataloader2 = torch.tensor(np.random.normal(1, 0.1, nc*n_examples).reshape((n_examples,nc)),dtype=torch.float)
-dataloader2 = torch.tensor(np.concatenate([np.random.normal(-1/2.0, 0.5, (n_examples,1)), np.random.normal(1/2.0, 0.5, (n_examples,1))], axis=1),dtype=torch.float)
+dataloader2 = torch.tensor(np.concatenate([np.random.normal(2, 1, (n_examples,1)), np.random.normal(3, 1, (n_examples,1))], axis=1),dtype=torch.float)
+
+x_range = (0,4)
+y_range = (0,5)
 
 # Decide which device we want to run on
 device = torch.device("cuda:0" if (torch.cuda.is_available() and ngpu > 0) else "cpu")
@@ -309,7 +312,7 @@ class Discriminator(nn.Module):
             nn.ReLU(inplace=True),
             #
             nn.Linear(ndf, n_classes),
-            nn.Sigmoid()
+            nn.Softmax()
         )
 
     def forward(self, input):
@@ -486,6 +489,8 @@ fake_D = []
 fake_D_gen = []
 perf = []
 perftime = []
+y_coord_hist = []
+waterfall_outf = '/scratch0/ilya/locDoc/MaryGAN/experiments/waterfall.npy'
 iters = 0
 
 print("Starting Training Loop...")
@@ -512,9 +517,10 @@ for epoch in range(num_epochs):
         output = netD(real_cpu).squeeze()
         # Calculate loss on all-real batch
         # loss variable names will be decision given true
+        d_g1 = criterion(output, label)
         d0g1 = criterion(output[:,0], label[:,0])
         d2g1 = criterion(output[:,2], label[:,2])
-        errD_real = d0g1# + d2g1
+        errD_real = d_g1#d0g1# + d2g1
         # Calculate gradients for D in backward pass
         # errD_real.backward()
         data1_D.append(torch.mean(output, dim=0).tolist())
@@ -529,9 +535,10 @@ for epoch in range(num_epochs):
         # Forward pass real batch through D
         output = netD(real_cpu2).squeeze()
         # Calculate loss on all-real batch
+        d_g1 = criterion(output, label)
         d0g2 = criterion(output[:,0], label[:,0])
         d1g2 = criterion(output[:,1], label[:,1])
-        errD_real2 = d0g2# + d1g2
+        errD_real2 = d_g1#d0g2# + d1g2
         # Calculate gradients for D in backward pass
         # errD_real2.backward()
         data2_D.append(torch.mean(output, dim=0).tolist())
@@ -550,10 +557,11 @@ for epoch in range(num_epochs):
         # Classify all fake batch with D
         output = netD(fake.detach()).squeeze()
         # Calculate D's loss on the all-fake batch
+        d_g1 = criterion(output, label)
         d0g0 = criterion(output[:,0], label[:,0])
         d1g0 = criterion(output[:,1], label[:,1])
         d2g0 = criterion(output[:,2], label[:,2])
-        errD_fake = d0g0#d1g0 + d2g0
+        errD_fake = d_g1#d0g0#d1g0 + d2g0
         # Calculate the gradients for this batch
         errD_fake.backward()
         fake_D.append(torch.mean(output, dim=0).tolist())
@@ -572,10 +580,11 @@ for epoch in range(num_epochs):
         # Since we just updated D, perform another forward pass of all-fake batch through D
         output = netD(fake).squeeze()
         # Calculate G's loss based on this output
+        d_g1 = criterion(output, label)
         d0g0_g = criterion(output[:,0], label[:,0])
         d1g0_g = criterion(output[:,1], label[:,1])
         d2g0_g = criterion(output[:,2], label[:,2])
-        errG = d0g0_g# d1g0_g + d2g0_g
+        errG = d_g1#d0g0_g# d1g0_g + d2g0_g
         # errG = 2*d0g0_g
         # Calculate gradients for G
         errG.backward()
@@ -598,8 +607,7 @@ for epoch in range(num_epochs):
         losses.append([errG.item(), errD.item()])
         real_losses_detail.append([d0g1.item(), d2g1.item(), d0g2.item(), d1g2.item()])
         fake_losses_detail.append([d1g0.item(), d2g0.item(), d1g0_g.item(), d2g0_g.item(), d0g0_g.item()])
-        
-        
+
 
         # Check how the generator is doing by saving G's output on fixed_noise
         if (iters % visdom_update_itrs == 0) or ((epoch == num_epochs-1) and (i == len(dataloader)-1)):
@@ -612,21 +620,24 @@ for epoch in range(num_epochs):
                 moving_fake = netG(new_noise).detach().cpu()
                 fixed_fake = netG(fixed_noise).detach().cpu()
             
-            plotX = np.concatenate([dataloader.numpy()[:64], dataloader2.numpy()[:64], moving_fake.numpy()[:500]])
-            plotY = np.concatenate([2*np.ones(64), 3*np.ones(64), np.ones(500)])
+            plotX = np.concatenate([moving_fake.numpy()[:500], dataloader.numpy()[:64], dataloader2.numpy()[:64]])
+            plotY = np.concatenate([np.ones(500), 2*np.ones(64), 3*np.ones(64)])
             
             last_itr_visuals.append(vis.scatter(plotX, plotY, opts={'legend': legend, 'title': 'Moving Fakes [epoch][itr]: [%d/%d][%d/%d]' % (epoch, num_epochs, i, len(dataloader)) }))
             
-            plotX = np.concatenate([dataloader.numpy()[:64], dataloader2.numpy()[:64], fixed_fake.numpy()[:64]])
-            plotY = np.concatenate([2*np.ones(64), 3*np.ones(64), np.ones(64)])
+            plotX = np.concatenate([fixed_fake.numpy()[:64], dataloader.numpy()[:64], dataloader2.numpy()[:64]])
+            plotY = np.concatenate([np.ones(64), 2*np.ones(64), 3*np.ones(64)])
             
             last_itr_visuals.append(vis.scatter(plotX, plotY, opts={'legend': legend, 'title': 'Fixed Fakes [epoch][itr]: [%d/%d][%d/%d]' % (epoch, num_epochs, i, len(dataloader)) }))
 
-            x_coord, bins = np.histogram(moving_fake.numpy()[:,0], 50, (-2,2))
-            y_coord, bins = np.histogram(moving_fake.numpy()[:,1], 50, (-2,2))
+            x_coord, bins = np.histogram(moving_fake.numpy()[:,0], 50, x_range)
+            y_coord, bins = np.histogram(moving_fake.numpy()[:,1], 50, y_range)
             bins = bins[:-1]
             last_itr_visuals.append(vis.bar(x_coord, bins, opts={'title': 'Moving Fakes, x coord' }))
             last_itr_visuals.append(vis.bar(y_coord, bins, opts={'title': 'Moving Fakes, y coord' }))
+
+            y_coord_hist.append(y_coord)
+            np.save(waterfall_outf, y_coord_hist)
 
             # fake_grid = vutils.make_grid(fixed_fake, padding=2, normalize=True)
             # moving_fake_grid = vutils.make_grid(moving_fake, padding=2, normalize=True)
