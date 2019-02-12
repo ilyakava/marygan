@@ -96,7 +96,7 @@ batch_size = 256
 # Spatial size of training images. All images will be resized to this
 #   size using a transformer.
 # image_size = 64 # not used
-visdom_update_itrs = 500
+visdom_update_itrs = 1000
 
 # Number of channels in the training images. For color images this is 3
 nc = 2
@@ -490,7 +490,7 @@ fake_D_gen = []
 perf = []
 perftime = []
 y_coord_hist = []
-waterfall_outf = '/scratch0/ilya/locDoc/MaryGAN/experiments/waterfall.npy'
+waterfall_outf = '/scratch0/ilya/locDoc/MaryGAN/experiments/waterfall3.npy'
 iters = 0
 
 print("Starting Training Loop...")
@@ -520,7 +520,7 @@ for epoch in range(num_epochs):
         d_g1 = criterion(output, label)
         d0g1 = criterion(output[:,0], label[:,0])
         d2g1 = criterion(output[:,2], label[:,2])
-        errD_real = d_g1#d0g1# + d2g1
+        errD_real = d_g1# d0g1# + d2g1
         # Calculate gradients for D in backward pass
         # errD_real.backward()
         data1_D.append(torch.mean(output, dim=0).tolist())
@@ -535,17 +535,17 @@ for epoch in range(num_epochs):
         # Forward pass real batch through D
         output = netD(real_cpu2).squeeze()
         # Calculate loss on all-real batch
-        d_g1 = criterion(output, label)
+        d_g2 = criterion(output, label)
         d0g2 = criterion(output[:,0], label[:,0])
         d1g2 = criterion(output[:,1], label[:,1])
-        errD_real2 = d_g1#d0g2# + d1g2
+        errD_real2 = d_g2# d0g2# + d1g2
         # Calculate gradients for D in backward pass
         # errD_real2.backward()
         data2_D.append(torch.mean(output, dim=0).tolist())
 
+        # errD_real_all = errD_real2
         errD_real_all = (errD_real + errD_real2) / 2
         errD_real_all.backward()
-
 
 
         ## Train with all-fake batch
@@ -557,11 +557,11 @@ for epoch in range(num_epochs):
         # Classify all fake batch with D
         output = netD(fake.detach()).squeeze()
         # Calculate D's loss on the all-fake batch
-        d_g1 = criterion(output, label)
+        d_g0 = criterion(output, label)
         d0g0 = criterion(output[:,0], label[:,0])
         d1g0 = criterion(output[:,1], label[:,1])
         d2g0 = criterion(output[:,2], label[:,2])
-        errD_fake = d_g1#d0g0#d1g0 + d2g0
+        errD_fake = d_g0#d0g0#d1g0 + d2g0
         # Calculate the gradients for this batch
         errD_fake.backward()
         fake_D.append(torch.mean(output, dim=0).tolist())
@@ -580,11 +580,11 @@ for epoch in range(num_epochs):
         # Since we just updated D, perform another forward pass of all-fake batch through D
         output = netD(fake).squeeze()
         # Calculate G's loss based on this output
-        d_g1 = criterion(output, label)
+        d_g0_g = criterion(output, label)
         d0g0_g = criterion(output[:,0], label[:,0])
         d1g0_g = criterion(output[:,1], label[:,1])
         d2g0_g = criterion(output[:,2], label[:,2])
-        errG = d_g1#d0g0_g# d1g0_g + d2g0_g
+        errG = d_g0_g#d0g0_g# d1g0_g + d2g0_g
         # errG = 2*d0g0_g
         # Calculate gradients for G
         errG.backward()
@@ -655,10 +655,11 @@ for epoch in range(num_epochs):
             last_itr_visuals.append(vis.line(decimate(real_losses_detail,ds), list(range(0,iters+1,ds)), opts={'legend': ['d0g1', 'd2g1', 'd0g2', 'd1g2'], 'title': 'Real Data Losses'}))
             last_itr_visuals.append(vis.line(decimate(fake_losses_detail,ds), list(range(0,iters+1,ds)), opts={'legend': ['d1g0', 'd2g0', 'd1g0_g', 'd2g0_g', 'd0g0_g'], 'title': 'Fake Data Losses'}))
 
-            last_itr_visuals.append(vis.line(decimate(data1_D,ds), list(range(0,iters+1,ds)), opts={'legend': legend, 'title': 'Data1 classification'}))
-            last_itr_visuals.append(vis.line(decimate(data2_D,ds), list(range(0,iters+1,ds)), opts={'legend': legend, 'title': 'Data2 classification'}))
-            last_itr_visuals.append(vis.line(decimate(fake_D,ds), list(range(0,iters+1,ds)), opts={'legend': legend, 'title': 'Fake classification, D step'}))
-            last_itr_visuals.append(vis.line(decimate(fake_D_gen,ds), list(range(0,iters+1,ds)), opts={'legend': legend, 'title': 'Fake classification, G step'}))
+            output_legend = ['output_%d' % i for i in range(n_classes)]
+            last_itr_visuals.append(vis.line(decimate(data1_D,ds), list(range(0,iters+1,ds)), opts={'legend': output_legend, 'title': 'Data1 classification'}))
+            last_itr_visuals.append(vis.line(decimate(data2_D,ds), list(range(0,iters+1,ds)), opts={'legend': output_legend, 'title': 'Data2 classification'}))
+            last_itr_visuals.append(vis.line(decimate(fake_D,ds), list(range(0,iters+1,ds)), opts={'legend': output_legend, 'title': 'Fake classification, D step'}))
+            last_itr_visuals.append(vis.line(decimate(fake_D_gen,ds), list(range(0,iters+1,ds)), opts={'legend': output_legend, 'title': 'Fake classification, G step'}))
 
             if perf:
                 ds = max(1,len(perf) // (max_line_samples+1))
