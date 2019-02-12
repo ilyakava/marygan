@@ -164,10 +164,10 @@ n_examples = 50000
 
 dataloader = torch.tensor(np.random.normal(2, 1, nc*n_examples).reshape((n_examples,nc)),dtype=torch.float)
 # dataloader2 = torch.tensor(np.random.normal(1, 0.1, nc*n_examples).reshape((n_examples,nc)),dtype=torch.float)
-dataloader2 = torch.tensor(np.concatenate([np.random.normal(2, 1, (n_examples,1)), np.random.normal(3, 1, (n_examples,1))], axis=1),dtype=torch.float)
+dataloader2 = torch.tensor(np.concatenate([np.random.normal(2, 1, (n_examples,1)), np.random.normal(4, 1, (n_examples,1))], axis=1),dtype=torch.float)
 
 x_range = (0,4)
-y_range = (0,5)
+y_range = (0,6)
 
 # Decide which device we want to run on
 device = torch.device("cuda:0" if (torch.cuda.is_available() and ngpu > 0) else "cpu")
@@ -520,9 +520,11 @@ for epoch in range(num_epochs):
         d_g1 = criterion(output, label)
         d0g1 = criterion(output[:,0], label[:,0])
         d2g1 = criterion(output[:,2], label[:,2])
-        errD_real = d_g1# d0g1# + d2g1
+        errD_real = d_g1 / 2 # d0g1# + d2g1
         # Calculate gradients for D in backward pass
-        # errD_real.backward()
+        errD_real.backward()
+        # optimizerD.step()
+        # netD.zero_grad()
         data1_D.append(torch.mean(output, dim=0).tolist())
 
 
@@ -538,14 +540,16 @@ for epoch in range(num_epochs):
         d_g2 = criterion(output, label)
         d0g2 = criterion(output[:,0], label[:,0])
         d1g2 = criterion(output[:,1], label[:,1])
-        errD_real2 = d_g2# d0g2# + d1g2
+        errD_real2 = d_g2 / 2# d0g2# + d1g2
         # Calculate gradients for D in backward pass
-        # errD_real2.backward()
+        errD_real2.backward()
+        # optimizerD.step()
+        # netD.zero_grad()
         data2_D.append(torch.mean(output, dim=0).tolist())
 
         # errD_real_all = errD_real2
         errD_real_all = (errD_real + errD_real2) / 2
-        errD_real_all.backward()
+        # errD_real_all.backward()
 
 
         ## Train with all-fake batch
@@ -620,24 +624,30 @@ for epoch in range(num_epochs):
                 moving_fake = netG(new_noise).detach().cpu()
                 fixed_fake = netG(fixed_noise).detach().cpu()
             
-            plotX = np.concatenate([moving_fake.numpy()[:500], dataloader.numpy()[:64], dataloader2.numpy()[:64]])
-            plotY = np.concatenate([np.ones(500), 2*np.ones(64), 3*np.ones(64)])
+            # scatterplot of moving fakes
+            # plotX = np.concatenate([moving_fake.numpy()[:500], dataloader.numpy()[:64], dataloader2.numpy()[:64]])
+            # plotY = np.concatenate([np.ones(500), 2*np.ones(64), 3*np.ones(64)])
+            # last_itr_visuals.append(vis.scatter(plotX, plotY, opts={'legend': legend, 'title': 'Moving Fakes [epoch][itr]: [%d/%d][%d/%d]' % (epoch, num_epochs, i, len(dataloader)) }))
             
-            last_itr_visuals.append(vis.scatter(plotX, plotY, opts={'legend': legend, 'title': 'Moving Fakes [epoch][itr]: [%d/%d][%d/%d]' % (epoch, num_epochs, i, len(dataloader)) }))
-            
+            # scatterplot of fixed fakes
             plotX = np.concatenate([fixed_fake.numpy()[:64], dataloader.numpy()[:64], dataloader2.numpy()[:64]])
             plotY = np.concatenate([np.ones(64), 2*np.ones(64), 3*np.ones(64)])
-            
             last_itr_visuals.append(vis.scatter(plotX, plotY, opts={'legend': legend, 'title': 'Fixed Fakes [epoch][itr]: [%d/%d][%d/%d]' % (epoch, num_epochs, i, len(dataloader)) }))
 
-            x_coord, bins = np.histogram(moving_fake.numpy()[:,0], 50, x_range)
-            y_coord, bins = np.histogram(moving_fake.numpy()[:,1], 50, y_range)
-            bins = bins[:-1]
-            last_itr_visuals.append(vis.bar(x_coord, bins, opts={'title': 'Moving Fakes, x coord' }))
-            last_itr_visuals.append(vis.bar(y_coord, bins, opts={'title': 'Moving Fakes, y coord' }))
-
+            # histogram of x
+            # x_coord, x_bins = np.histogram(moving_fake.numpy()[:,0], 50, x_range)
+            # last_itr_visuals.append(vis.bar(x_coord, x_bins[:-1], opts={'title': 'Moving Fakes, x coord' }))
+            # histogram of y
+            y_coord, y_bins = np.histogram(moving_fake.numpy()[:,1], 50, y_range)
+            last_itr_visuals.append(vis.bar(y_coord, y_bins[:-1], opts={'title': 'Moving Fakes, y coord' }))
             y_coord_hist.append(y_coord)
             np.save(waterfall_outf, y_coord_hist)
+
+            # 2d histogram
+            H, xedges, yedges = np.histogram2d(moving_fake.numpy()[:,0], moving_fake.numpy()[:,1], (20,30), [x_range, y_range], normed=True)
+            Hlarge = scipy.misc.imresize(H, 10*np.array(H.shape))
+            last_itr_visuals.append(vis.image(np.flipud(Hlarge.T), opts={'title': 'Moving Fakes Heatmap'}))
+
 
             # fake_grid = vutils.make_grid(fixed_fake, padding=2, normalize=True)
             # moving_fake_grid = vutils.make_grid(moving_fake, padding=2, normalize=True)
@@ -649,21 +659,25 @@ for epoch in range(num_epochs):
             #     np.moveaxis(fixed_fake[random.randint(0, fixed_fake.shape[0]-1),:,:,:].numpy(),0,-1)) 
             
             # plot some lines
-            max_line_samples = 400
+            max_line_samples = 200
             ds = max(1,len(data1_D) // (max_line_samples+1))
-            last_itr_visuals.append(vis.line(decimate(losses,ds), list(range(0,iters+1,ds)), opts={'legend': ['errG', 'errD'], 'title': 'Network Losses'}))
-            last_itr_visuals.append(vis.line(decimate(real_losses_detail,ds), list(range(0,iters+1,ds)), opts={'legend': ['d0g1', 'd2g1', 'd0g2', 'd1g2'], 'title': 'Real Data Losses'}))
-            last_itr_visuals.append(vis.line(decimate(fake_losses_detail,ds), list(range(0,iters+1,ds)), opts={'legend': ['d1g0', 'd2g0', 'd1g0_g', 'd2g0_g', 'd0g0_g'], 'title': 'Fake Data Losses'}))
 
+            # losses
+            # last_itr_visuals.append(vis.line(decimate(losses,ds), list(range(0,iters+1,ds)), opts={'legend': ['errG', 'errD'], 'title': 'Network Losses'}))
+            # last_itr_visuals.append(vis.line(decimate(real_losses_detail,ds), list(range(0,iters+1,ds)), opts={'legend': ['d0g1', 'd2g1', 'd0g2', 'd1g2'], 'title': 'Real Data Losses'}))
+            # last_itr_visuals.append(vis.line(decimate(fake_losses_detail,ds), list(range(0,iters+1,ds)), opts={'legend': ['d1g0', 'd2g0', 'd1g0_g', 'd2g0_g', 'd0g0_g'], 'title': 'Fake Data Losses'}))
+
+            # network outputs
             output_legend = ['output_%d' % i for i in range(n_classes)]
             last_itr_visuals.append(vis.line(decimate(data1_D,ds), list(range(0,iters+1,ds)), opts={'legend': output_legend, 'title': 'Data1 classification'}))
             last_itr_visuals.append(vis.line(decimate(data2_D,ds), list(range(0,iters+1,ds)), opts={'legend': output_legend, 'title': 'Data2 classification'}))
             last_itr_visuals.append(vis.line(decimate(fake_D,ds), list(range(0,iters+1,ds)), opts={'legend': output_legend, 'title': 'Fake classification, D step'}))
-            last_itr_visuals.append(vis.line(decimate(fake_D_gen,ds), list(range(0,iters+1,ds)), opts={'legend': output_legend, 'title': 'Fake classification, G step'}))
+            # last_itr_visuals.append(vis.line(decimate(fake_D_gen,ds), list(range(0,iters+1,ds)), opts={'legend': output_legend, 'title': 'Fake classification, G step'}))
 
-            if perf:
-                ds = max(1,len(perf) // (max_line_samples+1))
-                last_itr_visuals.append(vis.line(decimate(perf, ds), perftime[::ds], opts={'title': 'iters per second'}))
+            # itrs per second
+            # if perf:
+            #     ds = max(1,len(perf) // (max_line_samples+1))
+            #     last_itr_visuals.append(vis.line(decimate(perf, ds), perftime[::ds], opts={'title': 'iters per second'}))
             
         iters += 1
 
