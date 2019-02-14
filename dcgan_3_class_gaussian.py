@@ -124,7 +124,7 @@ ngpu = 2
 
 n_classes = 3
 
-critic_iters = 5
+critic_iters = 1
 
 
 ######################################################################
@@ -379,6 +379,7 @@ print(netD)
 criterion = nn.BCELoss()
 # def criterion(x,y):
 #     return torch.mean(y*x + (1-y)*(-x))
+Vcriterion = nn.BCELoss(reduction='none')
 
 # Create batch of latent vectors that we will use to visualize
 #  the progression of the generator
@@ -592,7 +593,6 @@ for epoch in range(num_epochs):
         ############################
         # (2) Update G network: maximize log(D(G(z)))
         ###########################
-        # for c in range(1,n_classes):
         netG.zero_grad()
         # fake labels are real for generator cost
         label = torch.tensor([0,1,1], dtype=torch.float, device=device).repeat(b_size,1)
@@ -604,10 +604,12 @@ for epoch in range(num_epochs):
         d1g0_g = criterion(output[:,1], label[:,1])
         d2g0_g = criterion(output[:,2], label[:,2])
         
-        # dcg0_g = criterion(output[:,c], label[:,c])
-        # errG = d0g0_g + dcg0_g
+        Vd1g0_g = Vcriterion(output[:,1], label[:,1])
+        Vd2g0_g = Vcriterion(output[:,2], label[:,2])
+        drg0_g = torch.mean(torch.min(Vd1g0_g, Vd2g0_g))
+        errG = d0g0_g + drg0_g
 
-        errG = d0g0_g# d1g0_g + d2g0_g
+        # errG = d0g0_g# d1g0_g + d2g0_g
         # Calculate gradients for G
         errG.backward()
         # if ...
