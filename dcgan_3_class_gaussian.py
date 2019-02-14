@@ -96,7 +96,7 @@ batch_size = 256
 # Spatial size of training images. All images will be resized to this
 #   size using a transformer.
 # image_size = 64 # not used
-visdom_update_itrs = 1000
+visdom_update_itrs = 250
 
 # Number of channels in the training images. For color images this is 3
 nc = 2
@@ -162,12 +162,15 @@ critic_iters = 5
 # Create a isotropic dataset
 n_examples = 50000
 
-dataloader = torch.tensor(np.random.normal(2, 1, nc*n_examples).reshape((n_examples,nc)),dtype=torch.float)
+mu1 = (2,1)
+mu2 = (2,3)
+
+dataloader = torch.tensor(np.concatenate([np.random.normal(mu1[0], 1, (n_examples,1)), np.random.normal(mu1[1], 1, (n_examples,1))], axis=1),dtype=torch.float)
 # dataloader2 = torch.tensor(np.random.normal(1, 0.1, nc*n_examples).reshape((n_examples,nc)),dtype=torch.float)
-dataloader2 = torch.tensor(np.concatenate([np.random.normal(2, 1, (n_examples,1)), np.random.normal(4, 1, (n_examples,1))], axis=1),dtype=torch.float)
+dataloader2 = torch.tensor(np.concatenate([np.random.normal(mu2[0], 1, (n_examples,1)), np.random.normal(mu2[1], 1, (n_examples,1))], axis=1),dtype=torch.float)
 
 x_range = (0,4)
-y_range = (0,6)
+y_range = (-1,5)
 
 # Decide which device we want to run on
 device = torch.device("cuda:0" if (torch.cuda.is_available() and ngpu > 0) else "cpu")
@@ -490,7 +493,9 @@ fake_D_gen = []
 perf = []
 perftime = []
 y_coord_hist = []
-waterfall_outf = '/scratch0/ilya/locDoc/MaryGAN/experiments/waterfall3.npy'
+waterfall_outf = '/scratch0/ilya/locDoc/MaryGAN/experiments/waterfall.npy'
+hist2d_outf = '/scratch0/ilya/locDoc/MaryGAN/experiments/hist2d.npy'
+H_hist = []
 iters = 0
 
 print("Starting Training Loop...")
@@ -502,82 +507,92 @@ for epoch in range(num_epochs):
         data = [dataloader[i:i+batch_size,:]]
         data2 = [dataloader2[i:i+batch_size,:]]
         
-        ############################
-        # (1) Update D network: maximize log(D(x)) + log(1 - D(G(z)))
-        ###########################
-        ## Train with all-real batches
-        # first dataset
-        netD.zero_grad()
-        # Format batch
-        real_cpu = data[0].to(device)
-        b_size = real_cpu.size(0)
+        for ci in range(critic_iters):
 
-        label = torch.tensor([0,1,0], dtype=torch.float, device=device).repeat(b_size,1)
-        # Forward pass real batch through D
-        output = netD(real_cpu).squeeze()
-        # Calculate loss on all-real batch
-        # loss variable names will be decision given true
-        d_g1 = criterion(output, label)
-        d0g1 = criterion(output[:,0], label[:,0])
-        d2g1 = criterion(output[:,2], label[:,2])
-        errD_real = d_g1 / 2 # d0g1# + d2g1
-        # Calculate gradients for D in backward pass
-        errD_real.backward()
-        # optimizerD.step()
-        # netD.zero_grad()
-        data1_D.append(torch.mean(output, dim=0).tolist())
+            ############################
+            # (1) Update D network: maximize log(D(x)) + log(1 - D(G(z)))
+            ###########################
+            ## Train with all-real batches
+            # first dataset
+            netD.zero_grad()
+            # Format batch
+            real_cpu = data[0].to(device)
+            b_size = real_cpu.size(0)
 
-
-
-        # second dataset 
-        real_cpu2 = data2[0].to(device)
-        b_size2 = real_cpu2.size(0)
-
-        label = torch.tensor([0,0,1], dtype=torch.float, device=device).repeat(b_size2,1)
-        # Forward pass real batch through D
-        output = netD(real_cpu2).squeeze()
-        # Calculate loss on all-real batch
-        d_g2 = criterion(output, label)
-        d0g2 = criterion(output[:,0], label[:,0])
-        d1g2 = criterion(output[:,1], label[:,1])
-        errD_real2 = d_g2 / 2# d0g2# + d1g2
-        # Calculate gradients for D in backward pass
-        errD_real2.backward()
-        # optimizerD.step()
-        # netD.zero_grad()
-        data2_D.append(torch.mean(output, dim=0).tolist())
-
-        # errD_real_all = errD_real2
-        errD_real_all = (errD_real + errD_real2) / 2
-        # errD_real_all.backward()
+            label = torch.tensor([0,1,0], dtype=torch.float, device=device).repeat(b_size,1)
+            # Forward pass real batch through D
+            output = netD(real_cpu).squeeze()
+            # Calculate loss on all-real batch
+            # loss variable names will be decision given true
+            d_g1 = criterion(output, label)
+            d0g1 = criterion(output[:,0], label[:,0])
+            d2g1 = criterion(output[:,2], label[:,2])
+            errD_real = d_g1 / 2 # d0g1# + d2g1
+            # Calculate gradients for D in backward pass
+            errD_real.backward()
+            # optimizerD.step()
+            # netD.zero_grad()
+            if ci == (critic_iters - 1):
+                data1_D.append(torch.mean(output, dim=0).tolist())
 
 
-        ## Train with all-fake batch
-        # Generate batch of latent vectors
-        noise = torch.randn(b_size, nz, device=device)
-        # Generate fake image batch with G
-        fake = netG(noise)
-        label = torch.tensor([1,0,0], dtype=torch.float, device=device).repeat(b_size,1)
-        # Classify all fake batch with D
-        output = netD(fake.detach()).squeeze()
-        # Calculate D's loss on the all-fake batch
-        d_g0 = criterion(output, label)
-        d0g0 = criterion(output[:,0], label[:,0])
-        d1g0 = criterion(output[:,1], label[:,1])
-        d2g0 = criterion(output[:,2], label[:,2])
-        errD_fake = d_g0#d0g0#d1g0 + d2g0
-        # Calculate the gradients for this batch
-        errD_fake.backward()
-        fake_D.append(torch.mean(output, dim=0).tolist())
-        # Add the gradients from the all-real and all-fake batches
-        # errD = errD_real + errD_real2 + errD_fake
-        errD = errD_real_all + errD_fake
-        # Update D
-        optimizerD.step()
+
+            # second dataset 
+            real_cpu2 = data2[0].to(device)
+            b_size2 = real_cpu2.size(0)
+
+            label = torch.tensor([0,0,1], dtype=torch.float, device=device).repeat(b_size2,1)
+            # Forward pass real batch through D
+            output = netD(real_cpu2).squeeze()
+            # Calculate loss on all-real batch
+            d_g2 = criterion(output, label)
+            d0g2 = criterion(output[:,0], label[:,0])
+            d1g2 = criterion(output[:,1], label[:,1])
+            errD_real2 = d_g2 / 2# d0g2# + d1g2
+            # Calculate gradients for D in backward pass
+            errD_real2.backward()
+            # optimizerD.step()
+            # netD.zero_grad()
+            if ci == (critic_iters - 1):
+                data2_D.append(torch.mean(output, dim=0).tolist())
+
+            # errD_real_all = errD_real2
+            errD_real_all = (errD_real + errD_real2) / 2
+            # errD_real_all.backward()
+
+
+            ## Train with all-fake batch
+            # Generate batch of latent vectors
+            noise = torch.randn(b_size, nz, device=device)
+            # Generate fake image batch with G
+            fake = netG(noise)
+            label = torch.tensor([1,0,0], dtype=torch.float, device=device).repeat(b_size,1)
+            # Classify all fake batch with D
+            output = netD(fake.detach()).squeeze()
+            # Calculate D's loss on the all-fake batch
+            d_g0 = criterion(output, label)
+            d0g0 = criterion(output[:,0], label[:,0])
+            d1g0 = criterion(output[:,1], label[:,1])
+            d2g0 = criterion(output[:,2], label[:,2])
+            errD_fake = d_g0#d0g0#d1g0 + d2g0
+            # Calculate the gradients for this batch
+            errD_fake.backward()
+            if ci == (critic_iters - 1):
+                fake_D.append(torch.mean(output, dim=0).tolist())
+            # Add the gradients from the all-real and all-fake batches
+            # errD = errD_real + errD_real2 + errD_fake
+            errD = errD_real_all + errD_fake
+            # Update D
+            optimizerD.step()
+
+        if critic_iters > 1:
+            noise = torch.randn(b_size, nz, device=device)
+            fake = netG(noise)
 
         ############################
         # (2) Update G network: maximize log(D(G(z)))
         ###########################
+        # for c in range(1,n_classes):
         netG.zero_grad()
         # fake labels are real for generator cost
         label = torch.tensor([0,1,1], dtype=torch.float, device=device).repeat(b_size,1)
@@ -588,10 +603,14 @@ for epoch in range(num_epochs):
         d0g0_g = criterion(output[:,0], label[:,0])
         d1g0_g = criterion(output[:,1], label[:,1])
         d2g0_g = criterion(output[:,2], label[:,2])
-        errG = d_g0_g#d0g0_g# d1g0_g + d2g0_g
-        # errG = 2*d0g0_g
+        
+        # dcg0_g = criterion(output[:,c], label[:,c])
+        # errG = d0g0_g + dcg0_g
+
+        errG = d0g0_g# d1g0_g + d2g0_g
         # Calculate gradients for G
         errG.backward()
+        # if ...
         fake_D_gen.append(torch.mean(output, dim=0).tolist())
         # Update G
         optimizerG.step()
@@ -614,7 +633,7 @@ for epoch in range(num_epochs):
 
 
         # Check how the generator is doing by saving G's output on fixed_noise
-        if (iters % visdom_update_itrs == 0) or ((epoch == num_epochs-1) and (i == len(dataloader)-1)):
+        if ((iters % visdom_update_itrs == 0) or ((epoch == num_epochs-1) and (i == len(dataloader)-1))):
             while len(last_itr_visuals) > 0:
                 visual = last_itr_visuals.pop()
                 vis.close(visual)
@@ -634,20 +653,26 @@ for epoch in range(num_epochs):
             plotY = np.concatenate([np.ones(64), 2*np.ones(64), 3*np.ones(64)])
             last_itr_visuals.append(vis.scatter(plotX, plotY, opts={'legend': legend, 'title': 'Fixed Fakes [epoch][itr]: [%d/%d][%d/%d]' % (epoch, num_epochs, i, len(dataloader)) }))
 
+            # histograms
+            nxb = int((x_range[1] - x_range[0]) * 5)
+            nyb = int((y_range[1] - y_range[0]) * 5)
+
             # histogram of x
-            # x_coord, x_bins = np.histogram(moving_fake.numpy()[:,0], 50, x_range)
+            # x_coord, x_bins = np.histogram(moving_fake.numpy()[:,0], 2*nxb, x_range)
             # last_itr_visuals.append(vis.bar(x_coord, x_bins[:-1], opts={'title': 'Moving Fakes, x coord' }))
             # histogram of y
-            y_coord, y_bins = np.histogram(moving_fake.numpy()[:,1], 50, y_range)
+            y_coord, y_bins = np.histogram(moving_fake.numpy()[:,1], 2*nyb, y_range)
             last_itr_visuals.append(vis.bar(y_coord, y_bins[:-1], opts={'title': 'Moving Fakes, y coord' }))
             y_coord_hist.append(y_coord)
             np.save(waterfall_outf, y_coord_hist)
 
             # 2d histogram
-            H, xedges, yedges = np.histogram2d(moving_fake.numpy()[:,0], moving_fake.numpy()[:,1], (20,30), [x_range, y_range], normed=True)
-            Hlarge = scipy.misc.imresize(H, 10*np.array(H.shape))
+            scalef = 1+(200 // np.min([nxb,nyb]))
+            H, xedges, yedges = np.histogram2d(moving_fake.numpy()[:,0], moving_fake.numpy()[:,1], (nxb,nyb), [x_range, y_range], normed=True)
+            Hlarge = scipy.misc.imresize(H, scalef*np.array(H.shape))
             last_itr_visuals.append(vis.image(np.flipud(Hlarge.T), opts={'title': 'Moving Fakes Heatmap'}))
-
+            H_hist.append(H)
+            np.save(hist2d_outf, H_hist)
 
             # fake_grid = vutils.make_grid(fixed_fake, padding=2, normalize=True)
             # moving_fake_grid = vutils.make_grid(moving_fake, padding=2, normalize=True)
