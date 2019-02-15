@@ -2,7 +2,10 @@ import numpy as np
 
 import cvxpy as cvx
 
+import matplotlib.cm as cm
 from matplotlib import pyplot
+
+from scipy import stats
 
 import pdb
 
@@ -114,14 +117,110 @@ def quaternary_eg():
     # you can see in this case that f0 is multimodal, not a literal mixture,
     # when the datasets are closer together
 
+def two_dim_plot():
+    """Take 2 2d gaussians and solves our loss for them
+    """
+    mu1 = (2,1)
+    mu2 = (2,3)
+    subtitle = "mu_data1 = {}, mu_data2 = {}, var = 1".format(mu1,mu2)
+    x_range = (0,4)
+    y_range = (mu1[1]-2,mu2[1]+2)
+    nbins = (40,60)
+    tbins = np.prod(nbins)
+    n_examples = 10000000
+
+    samp1x = np.random.normal(mu1[0], 1, n_examples)
+    samp1y = np.random.normal(mu1[1], 1, n_examples)
+    samp2x = np.random.normal(mu2[0], 1, n_examples)
+    samp2y = np.random.normal(mu2[1], 1, n_examples)
+    
+    sampx = np.concatenate([samp1x, samp2x])
+    sampy = np.concatenate([samp1y, samp2y])
+
+    # normed=True does not mean it sums to 1
+    Hmix, xedges, yedges = np.histogram2d(sampx, sampy, nbins, [x_range, y_range], normed=True)
+    Hmix /= Hmix.sum()
+
+    H1, xedges, yedges = np.histogram2d(samp1x, samp1y, nbins, [x_range, y_range], normed=True)
+    H1 /= H1.sum()
+    H2, xedges, yedges = np.histogram2d(samp2x, samp2y, nbins, [x_range, y_range], normed=True)
+    H2 /= H2.sum()
+
+    # fix orientation
+    Hmix = Hmix.T
+    H1 = H1.T
+    H2 = H2.T
+    nbinsT = (60,40)
+
+
+    f1 = H1.reshape((tbins,))
+    f2 = H2.reshape((tbins,))
+    fmix = Hmix.reshape((tbins,))
+
+    f0 = solve_mary(f1,f2)
+    H0 = f0.reshape(nbinsT)
+
+
+    _, f1_bins = np.histogram(f1, 5)
+    _, f2_bins = np.histogram(f2, 5)
+    fr_bins = np.mean([f1_bins, f2_bins],axis=0)
+    fr_bins = fr_bins[:-1] # this last one is too close to the peak
+    # _, f0_bins = np.histogram(f0, 5)
+
+    fmix_bins = stats.mstats.mquantiles(fmix, [i/20.0 for i in range(7,20,3)])
+    f0_bins = stats.mstats.mquantiles(f0, [i/20.0 for i in range(7,20,3)])
+    fcomp_bins = np.mean([fmix_bins, f0_bins],axis=0)
+    
+    # plot 1
+    fig, (ax, ax2, ax3) = pyplot.subplots(1, 3, sharey=True)
+    ax.set_title('Contours of P_data1 and P_data2 over P_fake heatmap\n%s' % subtitle)
+
+    im = ax.imshow(H0, cmap=cm.gray, extent=x_range+y_range)
+    CS2 = ax.contour(H2, fr_bins, cmap='flag', extent=x_range+y_range)
+    CS1 = ax.contour(H1, fr_bins, cmap='flag', extent=x_range+y_range)
+
+    labs = {}
+    for b in fr_bins:
+        with_zero = '%.1E' % b
+        labs[b] = with_zero[:-2] + with_zero[-1]
+    ax.clabel(CS1, fr_bins[1:], inline=1, fmt=labs, fontsize=10)
+    CBI = fig.colorbar(im, shrink=0.5, ax=ax)
+
+    # plot 2
+    ax2.set_title('Contours of (P_data1 + P_data2)/2 over P_fake heatmap\n%s' % subtitle)
+
+    im = ax2.imshow(H0, cmap=cm.gray, extent=x_range+y_range)
+    CS1 = ax2.contour(Hmix, fcomp_bins, cmap='flag', extent=x_range+y_range)
+
+    labs = {}
+    for b in fcomp_bins:
+        with_zero = '%.1E' % b
+        labs[b] = with_zero[:-2] + with_zero[-1]
+    ax2.clabel(CS1, fcomp_bins, inline=1, fmt=labs, fontsize=10)
+    CBI = fig.colorbar(im, shrink=0.5, ax=ax2)
+
+    # plot 3
+    ax3.set_title('Contours of P_fake over (P_data1 + P_data2)/2 heatmap\n%s' % subtitle)
+
+    im = ax3.imshow(Hmix, cmap=cm.gray, extent=x_range+y_range)
+    CS1 = ax3.contour(H0, fcomp_bins, cmap='flag', extent=x_range+y_range)
+
+    ax3.clabel(CS1, fcomp_bins, inline=1, fmt=labs, fontsize=10)
+    CBI = fig.colorbar(im, shrink=0.5, ax=ax3)
+
+    fig.show()
+    pdb.set_trace()
+
+
+
 def ternary_eg():
     n_examples = 5000
-    hist_range = (-2,2)
+    hist_range = (0,6)
     nbins = 100
     bin_width = (hist_range[1] - hist_range[0])/float(nbins)
 
-    f1, bins = normal_hist(-1/2.0,0.5,n_examples,nbins,hist_range)
-    f2, bins = normal_hist(1/2.0,0.5,n_examples,nbins,hist_range)
+    f1, bins = normal_hist(2,1,n_examples,nbins,hist_range)
+    f2, bins = normal_hist(4,1,n_examples,nbins,hist_range)
 
     f0 = solve_mary(f1,f2)
     mix = (f1 + f2) / 2.0
@@ -146,4 +245,4 @@ def ternary_eg():
     pyplot.show()
 
 if __name__ == '__main__':
-    ternary_eg()
+    two_dim_plot()
