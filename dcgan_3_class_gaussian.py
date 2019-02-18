@@ -96,7 +96,7 @@ batch_size = 256
 # Spatial size of training images. All images will be resized to this
 #   size using a transformer.
 # image_size = 64 # not used
-visdom_update_itrs = 250
+visdom_update_itrs = 500
 
 # Number of channels in the training images. For color images this is 3
 nc = 2
@@ -122,7 +122,8 @@ beta1 = 0.5
 # Number of GPUs available. Use 0 for CPU mode.
 ngpu = 1
 
-n_classes = 3
+mus = [(2,2), (2,4), (4,2), (4,4)]
+n_classes = len(mus)+1 # including fake
 
 critic_iters = 1
 labeled_iters = 2
@@ -163,16 +164,12 @@ labeled_iters = 2
 # Create a isotropic dataset
 n_examples = 50000
 
-mu1 = (2,1)
-mu2 = (2,3)
-
 dataloader = []
 datalabels = []
 
-dataloader.append(np.concatenate([np.random.normal(mu1[0], 1, (n_examples,1)), np.random.normal(mu1[1], 1, (n_examples,1))], axis=1))
-datalabels.append(0*np.ones(n_examples))
-dataloader.append(np.concatenate([np.random.normal(mu2[0], 1, (n_examples,1)), np.random.normal(mu2[1], 1, (n_examples,1))], axis=1))
-datalabels.append(1*np.ones(n_examples))
+for i, mu in enumerate(mus):
+    dataloader.append(np.concatenate([np.random.normal(mu[0], 1, (n_examples,1)), np.random.normal(mu[1], 1, (n_examples,1))], axis=1))
+    datalabels.append(i*np.ones(n_examples))
 
 dataloader = np.concatenate(dataloader, 0)
 datalabels = np.concatenate(datalabels, 0)
@@ -185,8 +182,8 @@ datalabels = datalabels[perm]
 dataloader = torch.tensor(dataloader, dtype=torch.float)
 datalabels = torch.tensor(datalabels, dtype=torch.long)
 
-x_range = (0,4)
-y_range = (-1,5)
+x_range = (0,6)
+y_range = (0,6)
 
 
 
@@ -626,9 +623,11 @@ while True:
         # last_itr_visuals.append(vis.scatter(plotX, plotY, opts={'legend': legend, 'title': 'Moving Fakes [epoch][itr]: [%d/%d][%d/%d]' % (epoch, num_epochs, i, len(dataloader)) }))
         
         # scatterplot of fixed fakes
+        # the order of the legend follows the order of the label ordinals
+        classes_legend = ['data_%d' % (i+1) for i in range(K)] + ['fake']
         plotX = np.concatenate([fixed_fake.numpy()[:64], dataloader[:128].numpy()])
         plotY = np.concatenate([(K+1)*np.ones(64), 1+datalabels[:128].numpy()])
-        last_itr_visuals.append(vis.scatter(plotX, plotY, opts={'legend': legend, 'title': 'Fixed Fakes [%d]:' % (iters) }))
+        last_itr_visuals.append(vis.scatter(plotX, plotY, opts={'legend': classes_legend, 'title': 'Fixed Fakes [%d]:' % (iters) }))
 
         # histograms
         nxb = int((x_range[1] - x_range[0]) * 5)
