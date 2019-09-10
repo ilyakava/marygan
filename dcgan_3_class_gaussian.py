@@ -9,6 +9,7 @@ import time
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 import torch.nn.parallel
 import torch.backends.cudnn as cudnn
 import torch.optim as optim
@@ -96,7 +97,7 @@ batch_size = 256
 # Spatial size of training images. All images will be resized to this
 #   size using a transformer.
 # image_size = 64 # not used
-visdom_update_itrs = 500
+visdom_update_itrs = 1000
 
 # Number of channels in the training images. For color images this is 3
 nc = 2
@@ -330,7 +331,7 @@ class Discriminator(nn.Module):
     def __init__(self, ngpu):
         super(Discriminator, self).__init__()
         self.ngpu = ngpu
-        self.main = nn.Sequential(
+        self.net = nn.Sequential(
             # input is (nc)
             nn.Linear(nc, ndf),
             nn.ReLU(inplace=True),
@@ -341,12 +342,15 @@ class Discriminator(nn.Module):
             nn.Linear(ndf, ndf),
             nn.ReLU(inplace=True),
             #
-            nn.Linear(ndf, n_classes),
-            nn.Softmax()
+            nn.Linear(ndf, n_classes)
         )
+        self.softmax = nn.Softmax()
 
-    def forward(self, input):
-        return self.main(input)
+    def forward(self, input, probabilities=True):
+        if probabilities:
+            return self.softmax(self.net(input))
+        else:
+            return self.net(input)
 
 
 ######################################################################
@@ -410,12 +414,23 @@ def criterion(x,y):
     return torch.mean(y*x + (1-y)*(-x))
 Vbce = nn.BCELoss(reduction='none')
 
-def myloss(X, Y1hot, Ylabel):
+def myloss(X, Y1hot, Ylabel, loss_type='nll'):
     """For trying multiple losses.
         Y1hot: target_1hot, target_lab
+
+        hinge-yogesh should take raw ouput of network, no softmax
     """
     # NLL case takes indices
-    return nll(torch.log(X), Ylabel)
+    if loss_type == 'nll':
+        return nll(torch.log(X), Ylabel)
+    # elif loss_type == 'wasserstein':
+    elif loss_type == 'hinge-yogesh':
+        inputs = X.gather(1,Ylabel.unsqueeze(-1))
+        # inputs = torch.log(inputs / (1-inputs))
+        labels = Y1hot.gather(1,Ylabel.unsqueeze(-1))
+        return torch.mean(F.relu(1 + inputs*labels)) + torch.mean(F.relu(1 - inputs*(1-labels)))
+    else:
+        raise NotImplementedError('Loss type: %s' % loss_type)
 
     # older BCE case
     # return bce(X, Y1hot)
@@ -569,11 +584,11 @@ while True:
         for li in range(labeled_iters):
             data, label = next(labeled_batch)
             real_cpu = data.to(device)
-            output = netD(real_cpu).squeeze()
+            output = netD(real_cpu,probabilities=True).squeeze()
             lab_labels_1hot = torch.zeros(output.shape, dtype=torch.float).scatter_(1, label.unsqueeze(-1), 1)
             label = label.to(device)
             lab_labels_1hot = lab_labels_1hot.to(device)
-            d_g1 = myloss(output, lab_labels_1hot, label)
+            d_g1 = myloss(output, lab_labels_1hot, label, loss_type='nll')
             errD_real += d_g1
         errD_real /= labeled_iters
 
@@ -585,10 +600,11 @@ while True:
         ## Train with all-fake batch
         noise = torch.randn(batch_size, nz, device=device)
         fake = netG(noise)
-        output = netD(fake.detach()).squeeze()
+        output = netD(fake.detach(),probabilities=True).squeeze()
         label = K*torch.ones((output.shape[0],),dtype=torch.long,device=device)
         gen_labels_1hot = torch.zeros(output.shape, device=device).scatter_(1, label.unsqueeze(-1), 1)
-        d_g0 = myloss(output, gen_labels_1hot, label)
+        d_g0 = myloss(output, gen_labels_1hot, label, loss_type='nll')
+        # d_g0 = myloss(output, gen_labels_1hot, label)
         errD_fake = d_g0
         
         # Calculate the gradients for this batch
