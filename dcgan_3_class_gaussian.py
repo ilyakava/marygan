@@ -80,7 +80,8 @@ ndf = 512
 num_epochs = 500
 
 # Learning rate for optimizers 
-lr = 0.0001 # now
+# lr = 0.0001 # now
+lr = 5e-5 # improved_wgan_training
 
 # Beta1 hyperparam for Adam optimizers
 beta1 = 0.5
@@ -104,6 +105,9 @@ n_classes = len(mus)+1 # including fake
 
 critic_iters = 1
 labeled_iters = 1
+
+# set to 0 to not use, 0.01 in improved_wgan_training github
+clip_weights_value = 0.01
 
 ######################################################################
 
@@ -137,11 +141,8 @@ device = torch.device("cuda:0" if (torch.cuda.is_available() and ngpu > 0) else 
 
 def weights_init(m):
     classname = m.__class__.__name__
-    if classname.find('Conv') != -1:
-        nn.init.normal_(m.weight.data, 0.0, 0.02)
-    elif classname.find('BatchNorm') != -1:
-        nn.init.normal_(m.weight.data, 1.0, 0.02)
-        nn.init.constant_(m.bias.data, 0)
+    if classname.find('Linear') != -1:
+        nn.init.normal_(m.weight.data, 0.0, 2.0 / ngf)
 
 class Generator(nn.Module):
     # https://github.com/igul222/improved_wgan_training/blob/master/gan_toy.py
@@ -231,15 +232,17 @@ def myloss(X, Y1hot, Ylabel, loss_type='nll'):
     """For trying multiple losses.
         Y1hot: target_1hot, target_lab
 
-        hinge-yogesh should take raw ouput of network, no softmax
+        wgan should take raw ouput of network, no softmax
     """
     # NLL case takes indices
     if loss_type == 'nll':
         return nll(torch.log(X), Ylabel)
-    # elif loss_type == 'wasserstein':
-    elif loss_type == 'hinge-yogesh':
+    elif loss_type == 'wasserstein':
         inputs = X.gather(1,Ylabel.unsqueeze(-1))
-        # inputs = torch.log(inputs / (1-inputs))
+        labels = Y1hot.gather(1,Ylabel.unsqueeze(-1))
+        return torch.mean(inputs*labels) - torch.mean(inputs*(1-labels))
+    elif loss_type == 'hinge':
+        inputs = X.gather(1,Ylabel.unsqueeze(-1))
         labels = Y1hot.gather(1,Ylabel.unsqueeze(-1))
         return torch.mean(F.relu(1 + inputs*labels)) + torch.mean(F.relu(1 - inputs*(1-labels)))
     else:
@@ -265,9 +268,12 @@ fixed_noise = torch.randn(64, nz, device=device)
 real_label = 1
 fake_label = 0
 
-# Setup Adam optimizers for both G and D
-optimizerD = optim.Adam(netD.parameters(), lr=lr, betas=(beta1, 0.999))
-optimizerG = optim.Adam(netG.parameters(), lr=lr, betas=(beta1, 0.999))
+# Adam
+# optimizerD = optim.Adam(netD.parameters(), lr=lr, betas=(beta1, 0.999))
+# optimizerG = optim.Adam(netG.parameters(), lr=lr, betas=(beta1, 0.999))
+# RMS like in like in improved_wgan_training without grad penalty
+optimizerD = torch.optim.RMSprop(netD.parameters(), lr=lr)
+optimizerG = torch.optim.RMSprop(netG.parameters(), lr=lr)
 
 ######################################################################
 # Training
@@ -330,11 +336,12 @@ while True:
         for li in range(labeled_iters):
             data, label = next(labeled_batch)
             real_cpu = data.to(device)
-            output = netD(real_cpu,probabilities=True).squeeze()
+            output = netD(real_cpu,probabilities=False).squeeze()
             lab_labels_1hot = torch.zeros(output.shape, dtype=torch.float).scatter_(1, label.unsqueeze(-1), 1)
             label = label.to(device)
             lab_labels_1hot = lab_labels_1hot.to(device)
-            d_g1 = myloss(output, lab_labels_1hot, label, loss_type='nll')
+            label = K*torch.ones((output.shape[0],),dtype=torch.long,device=device)
+            d_g1 = myloss(output, lab_labels_1hot, label, loss_type='hinge')
             errD_real += d_g1
         errD_real /= labeled_iters
 
@@ -346,11 +353,10 @@ while True:
         ## Train with all-fake batch
         noise = torch.randn(batch_size, nz, device=device)
         fake = netG(noise)
-        output = netD(fake.detach(),probabilities=True).squeeze()
+        output = netD(fake.detach(),probabilities=False).squeeze()
         label = K*torch.ones((output.shape[0],),dtype=torch.long,device=device)
         gen_labels_1hot = torch.zeros(output.shape, device=device).scatter_(1, label.unsqueeze(-1), 1)
-        d_g0 = myloss(output, gen_labels_1hot, label, loss_type='nll')
-        # d_g0 = myloss(output, gen_labels_1hot, label)
+        d_g0 = myloss(output, gen_labels_1hot, label, loss_type='hinge')
         errD_fake = d_g0
         
         # Calculate the gradients for this batch
@@ -363,20 +369,27 @@ while True:
         # Update D
         optimizerD.step()
 
+        if clip_weights_value:
+            for param in netD.parameters():
+                param.data.clamp_(-clip_weights_value, clip_weights_value)
+
     if critic_iters > 1:
         noise = torch.randn(b_size, nz, device=device)
         fake = netG(noise)
+
 
     ############################
     # (2) Update G network: maximize log(D(G(z)))
     ###########################
     netG.zero_grad()
-    output = netD(fake).squeeze()
+    output = netD(fake,probabilities=False).squeeze()
     # fake labels are real for generator cost
     unl_labels_1hot = torch.ones(output.shape, device=device).scatter_(1, K*torch.ones((output.shape[0],1),dtype=torch.long,device=device), 0)
     # fake_loss = myloss(output[:,K], unl_labels_1hot[:,K])
     Vtrue_loss = mylossV(output[:,:K], unl_labels_1hot[:,:K])
     true_loss = -torch.mean(Vtrue_loss.max(1)[0])
+    label = K*torch.ones((output.shape[0],),dtype=torch.long,device=device)
+    true_loss = myloss(output, unl_labels_1hot, label, loss_type='hinge')
     
     # label = torch.from_numpy(np.random.randint(0, K, batch_size)).to(device)
     # alt_true_loss = nll(torch.log(output[:,:K]), label)
