@@ -123,10 +123,21 @@ beta1 = 0.5
 ngpu = 1
 
 mus = [(2,2), (2,4), (4,2), (4,4)]
+# 9 gaussians
+# mus = [(2,2), (2,4), (2,6), (4,2), (4,4), (4,6), (6,2), (6,4), (6,6)]
+x_range = (0,8)
+y_range = (0,8)
+var = 1/2.0
+
+# 2 gaussians
+# mus = [(2,1), (2,3)]
+# x_range = (0,4)
+# y_range = (-1,5)
+
 n_classes = len(mus)+1 # including fake
 
 critic_iters = 1
-labeled_iters = 2
+labeled_iters = 1
 
 
 ######################################################################
@@ -168,7 +179,7 @@ dataloader = []
 datalabels = []
 
 for i, mu in enumerate(mus):
-    dataloader.append(np.concatenate([np.random.normal(mu[0], 1, (n_examples,1)), np.random.normal(mu[1], 1, (n_examples,1))], axis=1))
+    dataloader.append(np.concatenate([np.random.normal(mu[0], var, (n_examples,1)), np.random.normal(mu[1], var, (n_examples,1))], axis=1))
     datalabels.append(i*np.ones(n_examples))
 
 dataloader = np.concatenate(dataloader, 0)
@@ -182,8 +193,6 @@ datalabels = datalabels[perm]
 dataloader = torch.tensor(dataloader, dtype=torch.float)
 datalabels = torch.tensor(datalabels, dtype=torch.long)
 
-x_range = (0,6)
-y_range = (0,6)
 
 
 
@@ -252,6 +261,7 @@ def weights_init(m):
 # Generator Code
 
 class Generator(nn.Module):
+    # https://github.com/igul222/improved_wgan_training/blob/master/gan_toy.py
     def __init__(self, ngpu):
         super(Generator, self).__init__()
         self.ngpu = ngpu
@@ -316,6 +326,7 @@ print(netG)
 # Discriminator Code
 
 class Discriminator(nn.Module):
+    # https://github.com/igul222/improved_wgan_training/blob/master/gan_toy.py
     def __init__(self, ngpu):
         super(Discriminator, self).__init__()
         self.ngpu = ngpu
@@ -391,11 +402,32 @@ print(netD)
 # images form out of the noise.
 # 
 
-# Initialize BCELoss function
-criterion = nn.BCELoss()
-# def criterion(x,y):
-#     return torch.mean(y*x + (1-y)*(-x))
-Vcriterion = nn.BCELoss(reduction='none')
+
+# Losses
+bce = nn.BCELoss()
+nll = nn.NLLLoss()
+def criterion(x,y):
+    return torch.mean(y*x + (1-y)*(-x))
+Vbce = nn.BCELoss(reduction='none')
+
+def myloss(X, Y1hot, Ylabel):
+    """For trying multiple losses.
+        Y1hot: target_1hot, target_lab
+    """
+    # NLL case takes indices
+    return nll(torch.log(X), Ylabel)
+
+    # older BCE case
+    # return bce(X, Y1hot)
+
+def mylossV(X,Y1hot):
+    """
+    Before -1 * max, can be log prob, bce prob, or hinge
+    For Vbce: -1 * max makes bad gradients, need min
+    """
+    # return Vbce(X, Y1hot)
+    return torch.log(X)
+
 
 # Create batch of latent vectors that we will use to visualize
 #  the progression of the generator
@@ -539,8 +571,9 @@ while True:
             real_cpu = data.to(device)
             output = netD(real_cpu).squeeze()
             lab_labels_1hot = torch.zeros(output.shape, dtype=torch.float).scatter_(1, label.unsqueeze(-1), 1)
+            label = label.to(device)
             lab_labels_1hot = lab_labels_1hot.to(device)
-            d_g1 = criterion(output, lab_labels_1hot)
+            d_g1 = myloss(output, lab_labels_1hot, label)
             errD_real += d_g1
         errD_real /= labeled_iters
 
@@ -553,8 +586,9 @@ while True:
         noise = torch.randn(batch_size, nz, device=device)
         fake = netG(noise)
         output = netD(fake.detach()).squeeze()
-        gen_labels_1hot = torch.zeros(output.shape, device=device).scatter_(1, K*torch.ones((output.shape[0],1),dtype=torch.long,device=device), 1)
-        d_g0 = criterion(output, gen_labels_1hot)
+        label = K*torch.ones((output.shape[0],),dtype=torch.long,device=device)
+        gen_labels_1hot = torch.zeros(output.shape, device=device).scatter_(1, label.unsqueeze(-1), 1)
+        d_g0 = myloss(output, gen_labels_1hot, label)
         errD_fake = d_g0
         
         # Calculate the gradients for this batch
@@ -578,11 +612,14 @@ while True:
     output = netD(fake).squeeze()
     # fake labels are real for generator cost
     unl_labels_1hot = torch.ones(output.shape, device=device).scatter_(1, K*torch.ones((output.shape[0],1),dtype=torch.long,device=device), 0)
-    fake_loss = criterion(output[:,K], unl_labels_1hot[:,K])
-    Vtrue_loss = Vcriterion(output[:,:K], unl_labels_1hot[:,:K])
-    true_loss = torch.mean(Vtrue_loss.min(1)[0])
+    # fake_loss = myloss(output[:,K], unl_labels_1hot[:,K])
+    Vtrue_loss = mylossV(output[:,:K], unl_labels_1hot[:,:K])
+    true_loss = -torch.mean(Vtrue_loss.max(1)[0])
     
-    errG = fake_loss + true_loss
+    # label = torch.from_numpy(np.random.randint(0, K, batch_size)).to(device)
+    # alt_true_loss = nll(torch.log(output[:,:K]), label)
+    
+    errG = true_loss
     errG.backward()
     optimizerG.step()
 
@@ -613,7 +650,7 @@ while True:
             vis.close(visual)
 
         with torch.no_grad():
-            new_noise = torch.randn(2500, nz, device=device)
+            new_noise = torch.randn(50000, nz, device=device)
             moving_fake = netG(new_noise).detach().cpu()
             fixed_fake = netG(fixed_noise).detach().cpu()
         
