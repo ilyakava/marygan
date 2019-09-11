@@ -80,8 +80,10 @@ ndf = 512
 num_epochs = 500
 
 # Learning rate for optimizers 
-# lr = 0.0001 # now
-lr = 5e-5 # improved_wgan_training
+lr = 0.001 # now
+d_lr = lr
+g_lr = lr
+# lr = 5e-5 # improved_wgan_training
 
 # Beta1 hyperparam for Adam optimizers
 beta1 = 0.5
@@ -107,7 +109,7 @@ critic_iters = 1
 labeled_iters = 1
 
 # set to 0 to not use, 0.01 in improved_wgan_training github
-clip_weights_value = 0.01
+clip_weights_value = 0.1
 
 ######################################################################
 
@@ -138,11 +140,13 @@ device = torch.device("cuda:0" if (torch.cuda.is_available() and ngpu > 0) else 
 ######################################################################
 # Implementation
 # --------------
+init_weight_var = 2.0 / ngf # he initialization
+# init_weight_var = 0.02
 
 def weights_init(m):
     classname = m.__class__.__name__
     if classname.find('Linear') != -1:
-        nn.init.normal_(m.weight.data, 0.0, 2.0 / ngf)
+        nn.init.normal_(m.weight.data, 0.0, init_weight_var)
 
 class Generator(nn.Module):
     # https://github.com/igul222/improved_wgan_training/blob/master/gan_toy.py
@@ -272,8 +276,8 @@ fake_label = 0
 # optimizerD = optim.Adam(netD.parameters(), lr=lr, betas=(beta1, 0.999))
 # optimizerG = optim.Adam(netG.parameters(), lr=lr, betas=(beta1, 0.999))
 # RMS like in like in improved_wgan_training without grad penalty
-optimizerD = torch.optim.RMSprop(netD.parameters(), lr=lr)
-optimizerG = torch.optim.RMSprop(netG.parameters(), lr=lr)
+optimizerD = torch.optim.RMSprop(netD.parameters(), lr=d_lr)
+optimizerG = torch.optim.RMSprop(netG.parameters(), lr=g_lr)
 
 ######################################################################
 # Training
@@ -336,13 +340,19 @@ while True:
         for li in range(labeled_iters):
             data, label = next(labeled_batch)
             real_cpu = data.to(device)
-            output = netD(real_cpu,probabilities=False).squeeze()
+            output = netD(real_cpu,probabilities=True).squeeze()
             lab_labels_1hot = torch.zeros(output.shape, dtype=torch.float).scatter_(1, label.unsqueeze(-1), 1)
             label = label.to(device)
             lab_labels_1hot = lab_labels_1hot.to(device)
-            label = K*torch.ones((output.shape[0],),dtype=torch.long,device=device)
-            d_g1 = myloss(output, lab_labels_1hot, label, loss_type='hinge')
-            errD_real += d_g1
+
+            d_class = myloss(output, lab_labels_1hot, label, loss_type='nll')
+
+            fake_class_idx = K*torch.ones((output.shape[0],),dtype=torch.long,device=device)
+            output_logits = netD(real_cpu,probabilities=False).squeeze()
+            d_g1 = myloss(output_logits, lab_labels_1hot, fake_class_idx, loss_type='hinge')
+
+
+            errD_real += d_class + 0.1 * d_g1
         errD_real /= labeled_iters
 
         # Calculate gradients for D in backward pass
@@ -353,10 +363,12 @@ while True:
         ## Train with all-fake batch
         noise = torch.randn(batch_size, nz, device=device)
         fake = netG(noise)
-        output = netD(fake.detach(),probabilities=False).squeeze()
+        output = netD(fake.detach(),probabilities=True).squeeze()
+        # output = netD(fake.detach(),probabilities=False).squeeze()
         label = K*torch.ones((output.shape[0],),dtype=torch.long,device=device)
         gen_labels_1hot = torch.zeros(output.shape, device=device).scatter_(1, label.unsqueeze(-1), 1)
-        d_g0 = myloss(output, gen_labels_1hot, label, loss_type='hinge')
+        # d_g0 = myloss(output, gen_labels_1hot, label, loss_type='hinge')
+        d_g0 = myloss(output, gen_labels_1hot, label, loss_type='nll')
         errD_fake = d_g0
         
         # Calculate the gradients for this batch
@@ -382,19 +394,21 @@ while True:
     # (2) Update G network: maximize log(D(G(z)))
     ###########################
     netG.zero_grad()
-    output = netD(fake,probabilities=False).squeeze()
+    output = netD(fake,probabilities=True).squeeze()
     # fake labels are real for generator cost
     unl_labels_1hot = torch.ones(output.shape, device=device).scatter_(1, K*torch.ones((output.shape[0],1),dtype=torch.long,device=device), 0)
     # fake_loss = myloss(output[:,K], unl_labels_1hot[:,K])
     Vtrue_loss = mylossV(output[:,:K], unl_labels_1hot[:,:K])
     true_loss = -torch.mean(Vtrue_loss.max(1)[0])
-    label = K*torch.ones((output.shape[0],),dtype=torch.long,device=device)
-    true_loss = myloss(output, unl_labels_1hot, label, loss_type='hinge')
     
     # label = torch.from_numpy(np.random.randint(0, K, batch_size)).to(device)
     # alt_true_loss = nll(torch.log(output[:,:K]), label)
     
-    errG = true_loss
+    output_logits = netD(fake,probabilities=False).squeeze()
+    fake_class_idx = K*torch.ones((output.shape[0],),dtype=torch.long,device=device)
+    fake_loss = myloss(output_logits, unl_labels_1hot, fake_class_idx, loss_type='hinge')
+    
+    errG = true_loss + 0.1 * fake_loss
     errG.backward()
     optimizerG.step()
 
