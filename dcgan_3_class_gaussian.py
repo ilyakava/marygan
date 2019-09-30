@@ -91,12 +91,19 @@ beta1 = 0.5
 # Number of GPUs available. Use 0 for CPU mode.
 ngpu = 1
 
-mus = [(2,2), (2,4), (4,2), (4,4)]
+# mus = [(2,2), (2,4), (4,2), (4,4)]
 # 9 gaussians
 # mus = [(2,2), (2,4), (2,6), (4,2), (4,4), (4,6), (6,2), (6,4), (6,6)]
 x_range = (0,8)
 y_range = (0,8)
-var = 1/2.0
+# var = 1/2.0
+
+# circle of gaussians
+K = 15
+xs = 2*np.cos(np.linspace(0,2*np.pi, K,endpoint=False)) + 4
+ys = 2*np.sin(np.linspace(0,2*np.pi, K,endpoint=False)) + 4
+variances = [((10.0/K)/4,(10.0/K)/2)] * K
+mus = list(zip(xs,ys))
 
 # 2 gaussians
 # mus = [(2,1), (2,3)]
@@ -114,13 +121,18 @@ clip_weights_value = 0.1
 ######################################################################
 
 # Create a isotropic dataset
-n_examples = 50000
+n_examples = 10000
 
 dataloader = []
 datalabels = []
 
-for i, mu in enumerate(mus):
-    dataloader.append(np.concatenate([np.random.normal(mu[0], var, (n_examples,1)), np.random.normal(mu[1], var, (n_examples,1))], axis=1))
+for i in range(K):
+    # specific to circle
+    class_data = np.random.normal(0, variances[i], (n_examples,2))
+    t = 2*np.pi*i/float(K)
+    rot_mat = np.array([ [np.cos(t), -np.sin(t)], [np.sin(t), np.cos(t)] ])
+    rotated_data = np.dot(rot_mat, class_data.T).T
+    dataloader.append(rotated_data + np.array(mus[i]))
     datalabels.append(i*np.ones(n_examples))
 
 dataloader = np.concatenate(dataloader, 0)
@@ -468,13 +480,20 @@ while True:
         y_coord_hist.append(y_coord)
         np.save(waterfall_outf, y_coord_hist)
 
-        # 2d histogram
+        # 2d histogram of generated
         scalef = 1+(200 // np.min([nxb,nyb]))
         H, xedges, yedges = np.histogram2d(moving_fake.numpy()[:,0], moving_fake.numpy()[:,1], (nxb,nyb), [x_range, y_range], normed=True)
         Hlarge = scipy.misc.imresize(H, scalef*np.array(H.shape))
         last_itr_visuals.append(vis.image(np.flipud(Hlarge.T), opts={'title': 'Moving Fakes Heatmap'}))
         H_hist.append(H)
         np.save(hist2d_outf, H_hist)
+
+        # 2d histogram of real
+        if iters == 0:
+            scalef = 1+(200 // np.min([nxb,nyb]))
+            H, xedges, yedges = np.histogram2d(dataloader.numpy()[:,0], dataloader.numpy()[:,1], (nxb,nyb), [x_range, y_range], normed=True)
+            Hlarge = scipy.misc.imresize(H, scalef*np.array(H.shape))
+            vis.image(np.flipud(Hlarge.T), opts={'title': 'Real Heatmap'})
 
         # fake_grid = vutils.make_grid(fixed_fake, padding=2, normalize=True)
         # moving_fake_grid = vutils.make_grid(moving_fake, padding=2, normalize=True)
