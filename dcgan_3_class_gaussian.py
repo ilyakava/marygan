@@ -99,7 +99,7 @@ y_range = (0,8)
 # var = 1/2.0
 
 # circle of gaussians
-K = 15
+K = 10
 xs = 2*np.cos(np.linspace(0,2*np.pi, K,endpoint=False)) + 4
 ys = 2*np.sin(np.linspace(0,2*np.pi, K,endpoint=False)) + 4
 variances = [((10.0/K)/4,(10.0/K)/2)] * K
@@ -261,6 +261,22 @@ def myloss(X, Y1hot, Ylabel, loss_type='nll'):
         inputs = X.gather(1,Ylabel.unsqueeze(-1))
         labels = Y1hot.gather(1,Ylabel.unsqueeze(-1))
         return torch.mean(F.relu(1 + inputs*labels)) + torch.mean(F.relu(1 - inputs*(1-labels)))
+    elif loss_type == 'Cramer-Singer':
+        mask = torch.ones_like(X)
+        mask.scatter_(1, Ylabel.unsqueeze(-1), 0)
+        wrongs = torch.masked_select(X,mask.byte()).reshape(X.shape[0],K)
+        max_wrong, _ = wrongs.max(1)
+        max_wrong = max_wrong.unsqueeze(-1)
+        target = X.gather(1,Ylabel.unsqueeze(-1))
+        return torch.mean(F.relu(1 + max_wrong - target))
+    elif loss_type == 'Cramer-Singer-complement':
+        mask = torch.ones_like(X)
+        mask.scatter_(1, Ylabel.unsqueeze(-1), 0)
+        wrongs = torch.masked_select(X,mask.byte()).reshape(X.shape[0],K)
+        max_wrong, _ = wrongs.max(1)
+        max_wrong = max_wrong.unsqueeze(-1)
+        target = X.gather(1,Ylabel.unsqueeze(-1))
+        return torch.mean(F.relu(1 - max_wrong + target))
     else:
         raise NotImplementedError('Loss type: %s' % loss_type)
 
@@ -352,19 +368,19 @@ while True:
         for li in range(labeled_iters):
             data, label = next(labeled_batch)
             real_cpu = data.to(device)
-            output = netD(real_cpu,probabilities=True).squeeze()
+            output = netD(real_cpu,probabilities=False).squeeze()
             lab_labels_1hot = torch.zeros(output.shape, dtype=torch.float).scatter_(1, label.unsqueeze(-1), 1)
             label = label.to(device)
             lab_labels_1hot = lab_labels_1hot.to(device)
 
-            d_class = myloss(output, lab_labels_1hot, label, loss_type='nll')
+            d_class = myloss(output, lab_labels_1hot, label, loss_type='Cramer-Singer')
 
             fake_class_idx = K*torch.ones((output.shape[0],),dtype=torch.long,device=device)
             output_logits = netD(real_cpu,probabilities=False).squeeze()
             d_g1 = myloss(output_logits, lab_labels_1hot, fake_class_idx, loss_type='hinge')
 
 
-            errD_real += d_class + 0.1 * d_g1
+            errD_real += d_class + 0.0 * d_g1
         errD_real /= labeled_iters
 
         # Calculate gradients for D in backward pass
@@ -375,12 +391,12 @@ while True:
         ## Train with all-fake batch
         noise = torch.randn(batch_size, nz, device=device)
         fake = netG(noise)
-        output = netD(fake.detach(),probabilities=True).squeeze()
+        output = netD(fake.detach(),probabilities=False).squeeze()
         # output = netD(fake.detach(),probabilities=False).squeeze()
         label = K*torch.ones((output.shape[0],),dtype=torch.long,device=device)
         gen_labels_1hot = torch.zeros(output.shape, device=device).scatter_(1, label.unsqueeze(-1), 1)
         # d_g0 = myloss(output, gen_labels_1hot, label, loss_type='hinge')
-        d_g0 = myloss(output, gen_labels_1hot, label, loss_type='nll')
+        d_g0 = myloss(output, gen_labels_1hot, label, loss_type='Cramer-Singer')
         errD_fake = d_g0
         
         # Calculate the gradients for this batch
@@ -406,21 +422,24 @@ while True:
     # (2) Update G network: maximize log(D(G(z)))
     ###########################
     netG.zero_grad()
-    output = netD(fake,probabilities=True).squeeze()
-    # fake labels are real for generator cost
-    unl_labels_1hot = torch.ones(output.shape, device=device).scatter_(1, K*torch.ones((output.shape[0],1),dtype=torch.long,device=device), 0)
+    output = netD(fake,probabilities=False).squeeze()
     # fake_loss = myloss(output[:,K], unl_labels_1hot[:,K])
-    Vtrue_loss = mylossV(output[:,:K], unl_labels_1hot[:,:K])
-    true_loss = -torch.mean(Vtrue_loss.max(1)[0])
+    
+    # mode-gan loss
+    unl_labels_1hot = torch.ones(output.shape, device=device).scatter_(1, K*torch.ones((output.shape[0],1),dtype=torch.long,device=device), 0)
+    fake_class_idx = K*torch.ones((output.shape[0],),dtype=torch.long,device=device)
+    # Vtrue_loss = mylossV(output[:,:K], unl_labels_1hot[:,:K])
+    # true_loss = -torch.mean(Vtrue_loss.max(1)[0])
+
+    true_loss = myloss(output, unl_labels_1hot, fake_class_idx, loss_type='Cramer-Singer-complement')
     
     # label = torch.from_numpy(np.random.randint(0, K, batch_size)).to(device)
     # alt_true_loss = nll(torch.log(output[:,:K]), label)
     
     output_logits = netD(fake,probabilities=False).squeeze()
-    fake_class_idx = K*torch.ones((output.shape[0],),dtype=torch.long,device=device)
     fake_loss = myloss(output_logits, unl_labels_1hot, fake_class_idx, loss_type='hinge')
     
-    errG = true_loss + 0.1 * fake_loss
+    errG = true_loss + 0.0 * fake_loss
     errG.backward()
     optimizerG.step()
 

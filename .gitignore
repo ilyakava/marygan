@@ -1,1 +1,3 @@
 docs/figures/*
+.ipynb_checkpoints
+notebooks/*
