@@ -1,4 +1,16 @@
 # -*- coding: utf-8 -*-
+"""
+Example usage:
+
+# Improved GAN
+CUDA_VISIBLE_DEVICES=1 python main.py --d_loss nll --g_loss feature_matching
+# M-ary GAN
+CUDA_VISIBLE_DEVICES=1 python main.py --d_loss nll --g_loss positive_log_likelihood
+# dynamic activation maximization (Mode GAN)
+CUDA_VISIBLE_DEVICES=1 python main.py --d_loss nll --g_loss activation_maximization
+# Complement GAN
+CUDA_VISIBLE_DEVICES=1 python main.py --d_loss nll --g_loss crammer_singer_complement --g_loss_aux confuse --g_loss_aux_weight 0.5
+"""
 
 from __future__ import print_function
 #%matplotlib inline
@@ -38,6 +50,20 @@ vis = visdom.Visdom()
 last_itr_visuals = []
 
 
+parser = argparse.ArgumentParser()
+parser.add_argument('--batch_size', default=256, type=int)
+parser.add_argument('--d_lr', default=0.001, type=float)
+parser.add_argument('--g_lr', default=0.001, type=float)
+parser.add_argument("--d_loss", help="nll | activation_maximization | activation_minimization", default="nll")
+parser.add_argument("--g_loss", help="see d_loss", default="positive_log_likelihood")
+parser.add_argument("--g_loss_aux", help="see d_loss", default=None)
+parser.add_argument('--g_loss_aux_weight', default=0.0, type=float)
+
+args = parser.parse_args()
+
+losses_on_logits = ['crammer_singer', 'crammer_singer_complement', 'confuse']
+losses_on_features = ['feature_matching', 'feature_matching_l1']
+
 # Root directory for dataset
 legend = ['fake', 'data1', 'data2']
 # the smaller dataset should come first.
@@ -55,9 +81,6 @@ outdata_path = '/scratch0/ilya/locDoc/MaryGAN/experiments/male_and_female_close4
 
 # Number of workers for dataloader
 workers = 4
-
-# Batch size during training
-batch_size = 256
 
 # Spatial size of training images. All images will be resized to this
 #   size using a transformer.
@@ -79,10 +102,6 @@ ndf = 512
 # Number of training epochs
 num_epochs = 500
 
-# Learning rate for optimizers 
-lr = 0.001 # now
-d_lr = lr
-g_lr = lr
 # lr = 5e-5 # improved_wgan_training
 
 # Beta1 hyperparam for Adam optimizers
@@ -99,18 +118,14 @@ y_range = (0,8)
 # var = 1/2.0
 
 # circle of gaussians
-K = 10
+K = 4 #10
 xs = 2*np.cos(np.linspace(0,2*np.pi, K,endpoint=False)) + 4
 ys = 2*np.sin(np.linspace(0,2*np.pi, K,endpoint=False)) + 4
-variances = [((10.0/K)/4,(10.0/K)/2)] * K
+var_numer = 8 # 2
+variances = [(var_numer/8.0,var_numer/4.0)] * K
 mus = list(zip(xs,ys))
 
-# 2 gaussians
-# mus = [(2,1), (2,3)]
-# x_range = (0,4)
-# y_range = (-1,5)
-
-n_classes = len(mus)+1 # including fake
+n_classes = K+1 # including fake
 
 critic_iters = 1
 labeled_iters = 1
@@ -126,7 +141,7 @@ n_examples = 10000
 dataloader = []
 datalabels = []
 
-for i in range(K):
+for i in range(K-1): # skip a gaussian here
     # specific to circle
     class_data = np.random.normal(0, variances[i], (n_examples,2))
     t = 2*np.pi*i/float(K)
@@ -200,7 +215,7 @@ class Discriminator(nn.Module):
     def __init__(self, ngpu):
         super(Discriminator, self).__init__()
         self.ngpu = ngpu
-        self.net = nn.Sequential(
+        self.features = nn.Sequential(
             # input is (nc)
             nn.Linear(nc, ndf),
             nn.ReLU(inplace=True),
@@ -209,17 +224,19 @@ class Discriminator(nn.Module):
             nn.ReLU(inplace=True),
             #
             nn.Linear(ndf, ndf),
-            nn.ReLU(inplace=True),
-            #
-            nn.Linear(ndf, n_classes)
+            nn.ReLU(inplace=True)
         )
+        self.logits = nn.Linear(ndf, n_classes)
         self.softmax = nn.Softmax()
 
-    def forward(self, input, probabilities=True):
+    def forward(self, input, probabilities=True, features=False):
+        assert int(probabilities) + int(features) < 2, 'Cannot ask for both probabilities and features'
         if probabilities:
-            return self.softmax(self.net(input))
+            return self.softmax(self.logits(self.features(input)))
+        elif features:
+            return self.features(input)
         else:
-            return self.net(input)
+            return self.logits(self.features(input))
 
 netD = Discriminator(ngpu).to(device)
 
@@ -238,30 +255,68 @@ print(netD)
 # Loss Functions and Optimizers
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-bce = nn.BCELoss()
-nll = nn.NLLLoss()
-def criterion(x,y):
-    return torch.mean(y*x + (1-y)*(-x))
-Vbce = nn.BCELoss(reduction='none')
+nll = nn.NLLLoss() # cross entropy but assumes log was already taken
 
-def myloss(X, Y1hot, Ylabel, loss_type='nll'):
+def myloss(X=None, Ylabel=None, Xfeat=None, Yfeat=None, loss_type='nll'):
     """For trying multiple losses.
+    Args:
+        X: preds, could be probabilities or logits
+        Ylabel: scalar labels
+        
         Y1hot: target_1hot, target_lab
 
         wgan should take raw ouput of network, no softmax
     """
     # NLL case takes indices
-    if loss_type == 'nll':
+    if loss_type == 'nll_builtin':
         return nll(torch.log(X), Ylabel)
-    elif loss_type == 'wasserstein':
-        inputs = X.gather(1,Ylabel.unsqueeze(-1))
-        labels = Y1hot.gather(1,Ylabel.unsqueeze(-1))
-        return torch.mean(inputs*labels) - torch.mean(inputs*(1-labels))
-    elif loss_type == 'hinge':
-        inputs = X.gather(1,Ylabel.unsqueeze(-1))
-        labels = Y1hot.gather(1,Ylabel.unsqueeze(-1))
-        return torch.mean(F.relu(1 + inputs*labels)) + torch.mean(F.relu(1 - inputs*(1-labels)))
-    elif loss_type == 'Cramer-Singer':
+    elif loss_type == 'nll':
+        target = X.gather(1,Ylabel.unsqueeze(-1))
+        return torch.mean(-torch.log(target))
+    elif loss_type == 'feature_matching':
+        return torch.mean((torch.mean(Xfeat, dim=0) - torch.mean(Yfeat, dim=0))**2)
+    elif loss_type == 'feature_matching_l1':
+        return torch.mean(torch.abs(torch.mean(Xfeat, dim=0) - torch.mean(Yfeat, dim=0)))
+    elif loss_type == 'positive_log_likelihood':
+        # go away from Ylabel
+        target = X.gather(1,Ylabel.unsqueeze(-1))
+        return torch.mean(torch.log(target))
+    elif loss_type == 'activation_maximization':
+        # Ylabel acts as 'target' to avoid
+        mask = torch.ones_like(X)
+        mask.scatter_(1, Ylabel.unsqueeze(-1), 0)
+        wrongs = torch.masked_select(X,mask.byte()).reshape(X.shape[0],K)
+        max_wrong, _ = wrongs.max(1)
+        return torch.mean(-torch.log(max_wrong))
+    elif loss_type == 'activation_minimization':
+        # Ylabel acts as 'target' to avoid
+        mask = torch.ones_like(X)
+        mask.scatter_(1, Ylabel.unsqueeze(-1), 0)
+        wrongs = torch.masked_select(X,mask.byte()).reshape(X.shape[0],K)
+        min_wrong, _ = wrongs.min(1)
+        return torch.mean(-torch.log(min_wrong))
+    elif loss_type == 'confuse':
+        confuse_margin = 0.1 #  0.01
+        
+        mask = torch.ones_like(X)
+        mask.scatter_(1, Ylabel.unsqueeze(-1), 0)
+        wrongs = torch.masked_select(X,mask.byte()).reshape(X.shape[0],K)
+        max_wrong, max_Ylabel = wrongs.max(1)
+
+        mask.scatter_(1, max_Ylabel.unsqueeze(-1), 0)
+        wrongs2 = torch.masked_select(X,mask.byte()).reshape(X.shape[0],K-1)
+        runnerup_wrong, _ = wrongs2.max(1)
+        # make a step towards the margin if it is far from the margin
+        return torch.mean(F.relu(-confuse_margin + max_wrong - runnerup_wrong))
+    # elif loss_type == 'wasserstein':
+    #     inputs = X.gather(1,Ylabel.unsqueeze(-1))
+    #     labels = Y1hot.gather(1,Ylabel.unsqueeze(-1))
+    #     return torch.mean(inputs*labels) - torch.mean(inputs*(1-labels))
+    # elif loss_type == 'hinge':
+    #     inputs = X.gather(1,Ylabel.unsqueeze(-1))
+    #     labels = Y1hot.gather(1,Ylabel.unsqueeze(-1))
+    #     return torch.mean(F.relu(1 + inputs*labels)) + torch.mean(F.relu(1 - inputs*(1-labels)))
+    elif loss_type == 'crammer_singer':
         mask = torch.ones_like(X)
         mask.scatter_(1, Ylabel.unsqueeze(-1), 0)
         wrongs = torch.masked_select(X,mask.byte()).reshape(X.shape[0],K)
@@ -269,7 +324,7 @@ def myloss(X, Y1hot, Ylabel, loss_type='nll'):
         max_wrong = max_wrong.unsqueeze(-1)
         target = X.gather(1,Ylabel.unsqueeze(-1))
         return torch.mean(F.relu(1 + max_wrong - target))
-    elif loss_type == 'Cramer-Singer-complement':
+    elif loss_type == 'crammer_singer_complement':
         mask = torch.ones_like(X)
         mask.scatter_(1, Ylabel.unsqueeze(-1), 0)
         wrongs = torch.masked_select(X,mask.byte()).reshape(X.shape[0],K)
@@ -280,32 +335,16 @@ def myloss(X, Y1hot, Ylabel, loss_type='nll'):
     else:
         raise NotImplementedError('Loss type: %s' % loss_type)
 
-    # older BCE case
-    # return bce(X, Y1hot)
-
-def mylossV(X,Y1hot):
-    """
-    Before -1 * max, can be log prob, bce prob, or hinge
-    For Vbce: -1 * max makes bad gradients, need min
-    """
-    # return Vbce(X, Y1hot)
-    return torch.log(X)
-
-
 # Create batch of latent vectors that we will use to visualize
 #  the progression of the generator
 fixed_noise = torch.randn(64, nz, device=device)
-
-# Establish convention for real and fake labels during training
-real_label = 1
-fake_label = 0
 
 # Adam
 # optimizerD = optim.Adam(netD.parameters(), lr=lr, betas=(beta1, 0.999))
 # optimizerG = optim.Adam(netG.parameters(), lr=lr, betas=(beta1, 0.999))
 # RMS like in like in improved_wgan_training without grad penalty
-optimizerD = torch.optim.RMSprop(netD.parameters(), lr=d_lr)
-optimizerG = torch.optim.RMSprop(netG.parameters(), lr=g_lr)
+optimizerD = torch.optim.RMSprop(netD.parameters(), lr=args.d_lr)
+optimizerG = torch.optim.RMSprop(netG.parameters(), lr=args.g_lr)
 
 ######################################################################
 # Training
@@ -349,9 +388,11 @@ K = n_classes - 1
 
 def labeled_batch_generator():
     while True:
-        for i in range(0,dataloader.shape[0],batch_size):
-            data = dataloader[i:i+batch_size,:]
-            label = datalabels[i:i+batch_size]
+        # make sure the last leftover batch of with wrong size is skipped
+        for j in range(args.batch_size,dataloader.shape[0],args.batch_size):
+            i = j - args.batch_size
+            data = dataloader[i:i+args.batch_size,:]
+            label = datalabels[i:i+args.batch_size]
             yield (data, label)
 
 labeled_batch = labeled_batch_generator()
@@ -361,26 +402,25 @@ while True:
         ############################
         # (1) Update D network: maximize log(D(x)) + log(1 - D(G(z)))
         ###########################
+        gd_kwargs = {'probabilities': True, 'features': False}
+        if args.d_loss in losses_on_logits:
+            gd_kwargs = {'probabilities': False, 'features': False}
+            
         ## Train with all-real batches
         netD.zero_grad()
+        probabilities = True
         
         errD_real = 0
         for li in range(labeled_iters):
             data, label = next(labeled_batch)
             real_cpu = data.to(device)
-            output = netD(real_cpu,probabilities=False).squeeze()
-            lab_labels_1hot = torch.zeros(output.shape, dtype=torch.float).scatter_(1, label.unsqueeze(-1), 1)
+            output = netD(real_cpu,** gd_kwargs).squeeze()
             label = label.to(device)
-            lab_labels_1hot = lab_labels_1hot.to(device)
 
-            d_class = myloss(output, lab_labels_1hot, label, loss_type='Cramer-Singer')
+            errD_main = myloss(output, label, loss_type=args.d_loss)
 
-            fake_class_idx = K*torch.ones((output.shape[0],),dtype=torch.long,device=device)
-            output_logits = netD(real_cpu,probabilities=False).squeeze()
-            d_g1 = myloss(output_logits, lab_labels_1hot, fake_class_idx, loss_type='hinge')
-
-
-            errD_real += d_class + 0.0 * d_g1
+            errD_real += errD_main
+            
         errD_real /= labeled_iters
 
         # Calculate gradients for D in backward pass
@@ -389,14 +429,12 @@ while True:
             real_D.append(torch.mean(output, dim=0).tolist())
 
         ## Train with all-fake batch
-        noise = torch.randn(batch_size, nz, device=device)
+        noise = torch.randn(args.batch_size, nz, device=device)
         fake = netG(noise)
-        output = netD(fake.detach(),probabilities=False).squeeze()
-        # output = netD(fake.detach(),probabilities=False).squeeze()
+        output = netD(fake.detach(), **gd_kwargs).squeeze()
         label = K*torch.ones((output.shape[0],),dtype=torch.long,device=device)
-        gen_labels_1hot = torch.zeros(output.shape, device=device).scatter_(1, label.unsqueeze(-1), 1)
-        # d_g0 = myloss(output, gen_labels_1hot, label, loss_type='hinge')
-        d_g0 = myloss(output, gen_labels_1hot, label, loss_type='Cramer-Singer')
+        
+        d_g0 = myloss(output, label, loss_type=args.d_loss)
         errD_fake = d_g0
         
         # Calculate the gradients for this batch
@@ -405,7 +443,7 @@ while True:
             fake_D.append(torch.mean(output, dim=0).tolist())
         
         # Add the gradients from the all-real and all-fake batches
-        errD = errD_real + errD_fake
+        errD = (errD_real + errD_fake) / 2.0
         # Update D
         optimizerD.step()
 
@@ -421,34 +459,42 @@ while True:
     ############################
     # (2) Update G network: maximize log(D(G(z)))
     ###########################
+    gd_kwargs = {'probabilities': True, 'features': False}
+    if args.g_loss in losses_on_features:
+        gd_kwargs = {'probabilities': False, 'features': True}
+    if args.g_loss in losses_on_logits:
+        gd_kwargs = {'probabilities': False, 'features': False}
+    real_features = None
+    fake_features = None
+    output = None
+    
     netG.zero_grad()
-    output = netD(fake,probabilities=False).squeeze()
-    # fake_loss = myloss(output[:,K], unl_labels_1hot[:,K])
-    
-    # mode-gan loss
-    unl_labels_1hot = torch.ones(output.shape, device=device).scatter_(1, K*torch.ones((output.shape[0],1),dtype=torch.long,device=device), 0)
-    fake_class_idx = K*torch.ones((output.shape[0],),dtype=torch.long,device=device)
-    # Vtrue_loss = mylossV(output[:,:K], unl_labels_1hot[:,:K])
-    # true_loss = -torch.mean(Vtrue_loss.max(1)[0])
+    if gd_kwargs['features']:
+        fake_features = netD(fake,**gd_kwargs).squeeze()
+        real_features = netD(real_cpu,**gd_kwargs).detach().squeeze()
+    else:
+        output = netD(fake,**gd_kwargs).squeeze()
 
-    true_loss = myloss(output, unl_labels_1hot, fake_class_idx, loss_type='Cramer-Singer-complement')
+    # unl_labels_1hot = torch.ones(output.shape, device=device).scatter_(1, K*torch.ones((output.shape[0],1),dtype=torch.long,device=device), 0)
+    fake_class_idx = K*torch.ones((fake.shape[0],),dtype=torch.long,device=device)
     
-    # label = torch.from_numpy(np.random.randint(0, K, batch_size)).to(device)
-    # alt_true_loss = nll(torch.log(output[:,:K]), label)
+    errG_main = myloss(X=output, Ylabel=fake_class_idx, Xfeat=fake_features, Yfeat=real_features, loss_type=args.g_loss)
     
-    output_logits = netD(fake,probabilities=False).squeeze()
-    fake_loss = myloss(output_logits, unl_labels_1hot, fake_class_idx, loss_type='hinge')
+    if args.g_loss_aux is not None:
+        errG_aux = myloss(X=output, Ylabel=fake_class_idx, Xfeat=fake_features, Yfeat=real_features, loss_type=args.g_loss_aux)
+    else: 
+        errG_aux = 0.0
     
-    errG = true_loss + 0.0 * fake_loss
+    errG = (1 - args.g_loss_aux_weight) * errG_main + args.g_loss_aux_weight * errG_aux
+    
+    # Calculate gradients for G
     errG.backward()
+    # Update G
     optimizerG.step()
 
-    # errG = d0g0_g# d1g0_g + d2g0_g
-    # Calculate gradients for G
-    # if ...
-    fake_D_gen.append(torch.mean(output, dim=0).tolist())
-    # Update G
+    # fake_D_gen.append(torch.mean(output, dim=0).tolist())
     
+
     if iters % 10 == 9:
         now = time.time()
         perf.append(10 / (now - start))
@@ -534,7 +580,7 @@ while True:
         output_legend = ['output_%d' % i for i in range(n_classes)]
         last_itr_visuals.append(vis.line(decimate(real_D,ds), list(range(0,iters+1,ds)), opts={'legend': output_legend, 'title': 'Real classification'}))
         last_itr_visuals.append(vis.line(decimate(fake_D,ds), list(range(0,iters+1,ds)), opts={'legend': output_legend, 'title': 'Fake classification, D step'}))
-        last_itr_visuals.append(vis.line(decimate(fake_D_gen,ds), list(range(0,iters+1,ds)), opts={'legend': output_legend, 'title': 'Fake classification, G step'}))
+        # last_itr_visuals.append(vis.line(decimate(fake_D_gen,ds), list(range(0,iters+1,ds)), opts={'legend': output_legend, 'title': 'Fake classification, G step'}))
 
         # itrs per second
         # if perf:
