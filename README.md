@@ -1,6 +1,22 @@
-# K+1 GANS examples
+# K+1 GANS examples on Gaussians
+
+What we expect Improved GAN and Mode GAN (with dynamic activation maximization) to learn.
+
+![theory](./docs/figures/theory.png)
+
+What Mode GAN learns.
+
+![actual](./docs/figures/actual_big.gif)
+
+Run this example on cpu with:
+
+```
+python main.py --d_loss nll --g_loss activation_maximization --n_real_classes 10 --variance 2.0 --ngpu 0
+```
 
 ## Usage
+
+See:
 
 `python main.py`
 

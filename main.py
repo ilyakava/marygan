@@ -3,13 +3,16 @@
 Example usage:
 
 # Improved GAN
-CUDA_VISIBLE_DEVICES=1 python main.py --d_loss nll --g_loss feature_matching
+CUDA_VISIBLE_DEVICES=1 python main.py --d_loss nll --g_loss feature_matching --skip_one
 # M-ary GAN
-CUDA_VISIBLE_DEVICES=1 python main.py --d_loss nll --g_loss positive_log_likelihood
+CUDA_VISIBLE_DEVICES=1 python main.py --d_loss nll --g_loss positive_log_likelihood --skip_one
 # dynamic activation maximization (Mode GAN)
-CUDA_VISIBLE_DEVICES=1 python main.py --d_loss nll --g_loss activation_maximization
+CUDA_VISIBLE_DEVICES=1 python main.py --d_loss nll --g_loss activation_maximization --skip_one
 # Complement GAN
-CUDA_VISIBLE_DEVICES=1 python main.py --d_loss nll --g_loss crammer_singer_complement --g_loss_aux confuse --g_loss_aux_weight 0.5
+CUDA_VISIBLE_DEVICES=1 python main.py --d_loss nll --g_loss crammer_singer_complement --g_loss_aux confuse --g_loss_aux_weight 0.5 --skip_one
+
+10 Gaussian mode GAN:
+CUDA_VISIBLE_DEVICES=1 python main.py --d_loss nll --g_loss activation_maximization --n_real_classes 10 --variance 2.0
 """
 
 from __future__ import print_function
@@ -58,33 +61,21 @@ parser.add_argument("--d_loss", help="nll | activation_maximization | activation
 parser.add_argument("--g_loss", help="see d_loss", default="positive_log_likelihood")
 parser.add_argument("--g_loss_aux", help="see d_loss", default=None)
 parser.add_argument('--g_loss_aux_weight', default=0.0, type=float)
+parser.add_argument('--n_real_classes', default=4, type=int)
+parser.add_argument('--variance', default=8.0, type=float)
+parser.add_argument('--skip_one', action='store_true')
+parser.add_argument('--ngpu', default=1, type=int)
 
 args = parser.parse_args()
 
 losses_on_logits = ['crammer_singer', 'crammer_singer_complement', 'confuse']
 losses_on_features = ['feature_matching', 'feature_matching_l1']
 
-# Root directory for dataset
-legend = ['fake', 'data1', 'data2']
-# the smaller dataset should come first.
-#dataroot = '/scratch0/ilya/locDoc/data/oxford-flowers'
-dataroot = '/scratch0/ilya/locDoc/data/celeba_partitions/male_close'
-# dataroot = '/scratch0/ilya/locDoc/data/StackGAN/Caltech-UCSD-Birds-200-2011/CUB_200_2011'
-# dataroot2 = '/scratch0/ilya/locDoc/data/celeba'
-dataroot2 = '/scratch0/ilya/locDoc/data/celeba_partitions/female_close'
-# dataroot = '/scratch0/ilya/locDoc/data/mnist-M/mnist_m'
-# dataroot2 = '/scratch0/ilya/locDoc/data/svhn'
-# legend = ['fake', 'mu=-1', 'mu=+1']
-
-
-outdata_path = '/scratch0/ilya/locDoc/MaryGAN/experiments/male_and_female_close4'
+outdata_path = 'docs/figures/'
 
 # Number of workers for dataloader
 workers = 4
 
-# Spatial size of training images. All images will be resized to this
-#   size using a transformer.
-# image_size = 64 # not used
 visdom_update_itrs = 1000
 
 # Number of channels in the training images. For color images this is 3
@@ -102,26 +93,20 @@ ndf = 512
 # Number of training epochs
 num_epochs = 500
 
-# lr = 5e-5 # improved_wgan_training
-
 # Beta1 hyperparam for Adam optimizers
 beta1 = 0.5
 
 # Number of GPUs available. Use 0 for CPU mode.
-ngpu = 1
+ngpu = args.ngpu
 
-# mus = [(2,2), (2,4), (4,2), (4,4)]
-# 9 gaussians
-# mus = [(2,2), (2,4), (2,6), (4,2), (4,4), (4,6), (6,2), (6,4), (6,6)]
 x_range = (0,8)
 y_range = (0,8)
-# var = 1/2.0
 
 # circle of gaussians
-K = 4 #10
+K = args.n_real_classes #10
 xs = 2*np.cos(np.linspace(0,2*np.pi, K,endpoint=False)) + 4
 ys = 2*np.sin(np.linspace(0,2*np.pi, K,endpoint=False)) + 4
-var_numer = 8 # 2
+var_numer = args.variance # 8 # 2
 variances = [(var_numer/8.0,var_numer/4.0)] * K
 mus = list(zip(xs,ys))
 
@@ -135,13 +120,17 @@ clip_weights_value = 0.1
 
 ######################################################################
 
-# Create a isotropic dataset
+# Create the dataset
 n_examples = 10000
 
 dataloader = []
 datalabels = []
 
-for i in range(K-1): # skip a gaussian here
+rangeK = K
+if args.skip_one:
+    rangeK -= 1
+
+for i in range(rangeK): # skip a gaussian here
     # specific to circle
     class_data = np.random.normal(0, variances[i], (n_examples,2))
     t = 2*np.pi*i/float(K)
@@ -163,6 +152,8 @@ datalabels = torch.tensor(datalabels, dtype=torch.long)
 
 # Decide which device we want to run on
 device = torch.device("cuda:0" if (torch.cuda.is_available() and ngpu > 0) else "cpu")
+print('DEVICE IS {}'.format(device))
+
 
 ######################################################################
 # Implementation
@@ -307,6 +298,7 @@ def myloss(X=None, Ylabel=None, Xfeat=None, Yfeat=None, loss_type='nll'):
         wrongs2 = torch.masked_select(X,mask.byte()).reshape(X.shape[0],K-1)
         runnerup_wrong, _ = wrongs2.max(1)
         # make a step towards the margin if it is far from the margin
+        # if dist < confuse_margin, ignore
         return torch.mean(F.relu(-confuse_margin + max_wrong - runnerup_wrong))
     # elif loss_type == 'wasserstein':
     #     inputs = X.gather(1,Ylabel.unsqueeze(-1))
@@ -377,8 +369,8 @@ fake_D_gen = []
 perf = []
 perftime = []
 y_coord_hist = []
-waterfall_outf = '/scratch0/ilya/locDoc/MaryGAN/experiments/waterfall.npy'
-hist2d_outf = '/scratch0/ilya/locDoc/MaryGAN/experiments/hist2d.npy'
+waterfall_outf = 'docs/figures/waterfall.npy'
+hist2d_outf = 'docs/figures/hist2d.npy'
 H_hist = []
 iters = 0
 
