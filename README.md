@@ -6,7 +6,7 @@ What we expect Improved GAN and Mode GAN (with dynamic activation maximization) 
 
 What Mode GAN learns.
 
-![actual](./docs/figures/actual.gif =250x)
+<img src="https://raw.githubusercontent.com/ilyakava/marygan/master/docs/figures/actual.gif" alt="" data-canonical-src="https://raw.githubusercontent.com/ilyakava/marygan/master/docs/figures/actual.gif" width="300" height="300" />
 
 Run this example on cpu with:
 
