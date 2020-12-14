@@ -14,15 +14,21 @@ Run this example on cpu with:
 python main.py --d_loss nll --g_loss activation_maximization --n_real_classes 10 --variance 2.0 --ngpu 0
 ```
 
+Omit `--ngpu` to run on default GPU.
+
 ## Usage
 
 See:
 
 `python main.py`
 
+Don't forget to run `visdom` in a different screen.
+
 ## Versioning
 
-- python 3.6.8
-- torch '1.0.1'
-- cuda/10.0.130 
-- cudnn/7.5.0
+Works on torch 1.8.0 with python 3.6.12.
+
+Works on ROCM 3.10 also.
+
+Originally written on torch 1.0.1 python 3.6.8 cuda 10.0, cudnn 7.5.0
+

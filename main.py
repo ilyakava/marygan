@@ -35,7 +35,7 @@ import torchvision.utils as vutils
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.animation as animation
-from IPython.display import HTML
+#from IPython.display import HTML
 import visdom
 
 import scipy.misc
@@ -274,28 +274,28 @@ def myloss(X=None, Ylabel=None, Xfeat=None, Yfeat=None, loss_type='nll'):
         return torch.mean(torch.log(target))
     elif loss_type == 'activation_maximization':
         # Ylabel acts as 'target' to avoid
-        mask = torch.ones_like(X)
+        mask = torch.ones_like(X, dtype=bool)
         mask.scatter_(1, Ylabel.unsqueeze(-1), 0)
-        wrongs = torch.masked_select(X,mask.byte()).reshape(X.shape[0],K)
+        wrongs = torch.masked_select(X,mask).reshape(X.shape[0],K)
         max_wrong, _ = wrongs.max(1)
         return torch.mean(-torch.log(max_wrong))
     elif loss_type == 'activation_minimization':
         # Ylabel acts as 'target' to avoid
-        mask = torch.ones_like(X)
+        mask = torch.ones_like(X, dtype=bool)
         mask.scatter_(1, Ylabel.unsqueeze(-1), 0)
-        wrongs = torch.masked_select(X,mask.byte()).reshape(X.shape[0],K)
+        wrongs = torch.masked_select(X,mask).reshape(X.shape[0],K)
         min_wrong, _ = wrongs.min(1)
         return torch.mean(-torch.log(min_wrong))
     elif loss_type == 'confuse':
         confuse_margin = 0.1 #  0.01
         
-        mask = torch.ones_like(X)
+        mask = torch.ones_like(X, dtype=int)
         mask.scatter_(1, Ylabel.unsqueeze(-1), 0)
-        wrongs = torch.masked_select(X,mask.byte()).reshape(X.shape[0],K)
+        wrongs = torch.masked_select(X,mask.bool()).reshape(X.shape[0],K)
         max_wrong, max_Ylabel = wrongs.max(1)
 
         mask.scatter_(1, max_Ylabel.unsqueeze(-1), 0)
-        wrongs2 = torch.masked_select(X,mask.byte()).reshape(X.shape[0],K-1)
+        wrongs2 = torch.masked_select(X,mask.bool()).reshape(X.shape[0],K-1)
         runnerup_wrong, _ = wrongs2.max(1)
         # make a step towards the margin if it is far from the margin
         # if dist < confuse_margin, ignore
@@ -309,17 +309,17 @@ def myloss(X=None, Ylabel=None, Xfeat=None, Yfeat=None, loss_type='nll'):
     #     labels = Y1hot.gather(1,Ylabel.unsqueeze(-1))
     #     return torch.mean(F.relu(1 + inputs*labels)) + torch.mean(F.relu(1 - inputs*(1-labels)))
     elif loss_type == 'crammer_singer':
-        mask = torch.ones_like(X)
+        mask = torch.ones_like(X, dtype=bool)
         mask.scatter_(1, Ylabel.unsqueeze(-1), 0)
-        wrongs = torch.masked_select(X,mask.byte()).reshape(X.shape[0],K)
+        wrongs = torch.masked_select(X,mask).reshape(X.shape[0],K)
         max_wrong, _ = wrongs.max(1)
         max_wrong = max_wrong.unsqueeze(-1)
         target = X.gather(1,Ylabel.unsqueeze(-1))
         return torch.mean(F.relu(1 + max_wrong - target))
     elif loss_type == 'crammer_singer_complement':
-        mask = torch.ones_like(X)
+        mask = torch.ones_like(X, dtype=bool)
         mask.scatter_(1, Ylabel.unsqueeze(-1), 0)
-        wrongs = torch.masked_select(X,mask.byte()).reshape(X.shape[0],K)
+        wrongs = torch.masked_select(X,mask).reshape(X.shape[0],K)
         max_wrong, _ = wrongs.max(1)
         max_wrong = max_wrong.unsqueeze(-1)
         target = X.gather(1,Ylabel.unsqueeze(-1))
