@@ -16,9 +16,13 @@ python main.py --d_loss nll --g_loss activation_maximization --n_real_classes 10
 
 ## Usage
 
+Run `python -m visdom.server` in another window. 
+
 See:
 
 `python main.py`
+
+Results are displayed at `http://localhost:8097` by default.
 
 ## Versioning
 
